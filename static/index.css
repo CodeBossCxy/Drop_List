@@ -1,0 +1,68 @@
+body, html {
+    margin: 0;
+    padding: 0;
+    font-family: Nunito, sans-serif;
+}
+
+.container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    background: white;
+    overflow: hidden;
+}
+
+.logo-fixed {
+    position: fixed;
+    top: 10px;
+    right: 20px;
+    width: 130px;
+}
+
+
+.input-box {
+    width: 157px;
+    height: 30px;
+    padding: 8px 12px;
+    background: white;
+    box-shadow: 0px 2px 2px rgba(255, 255, 255, 0.15);
+    overflow: hidden;
+    border-radius: 8px;
+    outline: 1px #D5DDE5 solid;
+    outline-offset: -1px;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 8px;
+    display: inline-flex;
+}
+
+.placeholder {
+    color: #D5DDE5;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 17px;
+    word-wrap: break-word;
+}
+
+#containers-table {
+    margin-top: 140px; /* Adjust based on floating container height */
+    padding: 1rem;
+}
+
+td, th {
+    padding-right: 50px;
+    padding-bottom: 10px;
+}
+
+#containers-table {
+    padding-left: 20px;
+    padding-right: 50px;
+    padding-bottom: 10px;
+    /* display: block; */
+}
+#containers-table tr {
+    padding-bottom: 10px;
+}
+#containers-table th, td {
+    padding-right: 20px;
+}
