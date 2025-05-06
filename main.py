@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, Form
+from fastapi import FastAPI, HTTPException, Request, Form, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -71,6 +71,8 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
     return df.to_dict(orient="records")
 
 # --- API Routes ---
+
+active_connections = []
 @app.post("/test")
 def test():
     return {"message": "Success"}
@@ -93,3 +95,22 @@ async def request_serial_no(request: Request, part_no: str, serial_no: str):
     print("serial_no", serial_no)
     return JSONResponse(content={"message": "Success"})
 
+
+@app.get("/requests")
+async def get_requests(request: Request):
+    return templates.TemplateResponse("driver.html", {"request": request})
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    active_connections.append(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Send to all other users (broadcast style)
+            for conn in active_connections:
+                if conn != websocket:
+                    await conn.send_text(data)
+    except WebSocketDisconnect:
+        active_connections.remove(websocket)
