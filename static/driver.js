@@ -7,12 +7,22 @@ socket.onmessage = function(event) {
     const msg = document.createElement("li");
     msg.textContent = event.data;
     container = JSON.parse(event.data);
-    console.log("event.data", container);
-    let table = '<table style="width: 100%;" display="block">';
-    table += '<thead><tr><th>Serial No</th><th>Quantity</th><th>Location</th></tr></thead>';
-    table += '<tbody>'; 
-    table += `<tr><td>${container.Serial_No}</td><td>${container.Quantity}</td><td>${container.Location}</td></tr>`;
-    table += '</tbody></table>';
-    console.log("table: \n", table);
-    t.innerHTML = table;
+    console.log(typeof container);
+    console.log("event.data: \n", container);
+    const tbody = document.getElementById("containerTableBody");
+    const row = document.createElement("tr");
+    row.classList.add("adding-row");
+    row.innerHTML = `
+        <td>${container.serial_no}</td>
+        <td>${container.quantity}</td>
+        <td>${container.location}</td>
+        <td>${container.workcenter}</td>
+        <td><button class="delete-btn">Done</button></td>`;
+    row.querySelector(".delete-btn").addEventListener("click", () => {
+        tbody.removeChild(row);
+    }); 
+    
+    tbody.appendChild(row);
+    console.log("table: \n", tbody);
 };
+

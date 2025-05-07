@@ -54,15 +54,43 @@ td, th {
     padding-bottom: 10px;
 }
 
-#messages {
+.adding-row td, th {
+    padding-bottom: 10px;
+    padding-right: 50px;
+    padding-left: 20px;
+}
+
+#containerTable {
+    width: 100%;
+    display: block;
+}
+
+#containerTableBody {
+    display: block;
+}
+
+#containerTable {
     padding-left: 20px;
     padding-right: 50px;
     padding-bottom: 10px;
     /* display: block; */
 }
-#messages tr {
+#containerTable tr {
     padding-bottom: 10px;
 }
-#messages th, td {
+#containerTable th, td {
     padding-right: 20px;
+}
+
+.delete-btn {
+    background-color: #e74c3c;
+    color: white;
+    border: none;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.delete-btn:hover {
+    background-color: #c0392b;
 }
