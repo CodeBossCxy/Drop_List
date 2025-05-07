@@ -1,5 +1,5 @@
 
-const socket = new WebSocket("ws://localhost:8000/ws");
+const socket = new WebSocket("ws://10.1.3.54:8002/ws");
 const messages = document.getElementById("messages");
 
 socket.onmessage = function(event) {
