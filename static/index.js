@@ -17,19 +17,31 @@ async function getContainersByPartNo() {
                 body: JSON.stringify({ "part_no": part_no_input.value }),
             }).then(response => response.json())
               .then(data => {
+                console.log("--------------------------------");
                 console.log(data);
                 let table = '<table style="width: 100%;" display="block">';
-                table += '<thead><tr><th>No</th><th>Serial No</th><th>Quantity</th><th>Location</th></tr></thead>';
+                table += '<thead><tr><th>No</th><th>Serial No</th><th>Part No</th><th>Revision</th><th>Quantity</th><th>Location</th><th>Add Date</th></tr></thead>';
                 table += '<tbody>';
                 let container = null;
                 data.dataframe.forEach((row, index) => {
-                    table += `<tr class="clickable-row" style="cursor: pointer;"><td>${index + 1}</td><td>${row.Serial_No}</td><td>${row.Quantity}</td><td>${row.Location}</td></tr>`;
-                    // if (index === 0) {
-                    //     table += `<tr class="clickable-row" style="cursor: pointer;"><td>${index + 1}</td><td>${row.Serial_No}</td><td>${row.Quantity}</td><td>${row.Location}</td></tr>`;
-                    //     container = row
-                    // } else {
-                    //     table += `<tr><td>${index + 1}</td><td>${row.Serial_No}</td><td>${row.Quantity}</td><td>${row.Location}</td></tr>`;
-                    // }
+                    // Check if the location is in our production locations list
+                    // const inValidLocation = prodLocations.includes(row.Location);
+                    // console.log(`Location ${row.Location} is ${inValidLocation ? 'invalid' : 'valid'}`);
+                    
+                    // // You can use this information to style the row or add validation
+                    // const rowStyle = inValidLocation ? 'color: red' : '';
+
+                    if(!prodLocations.includes(row.Location)){
+                        table += `<tr class="clickable-row" style="cursor: pointer;">
+                            <td>${index + 1}</td>
+                            <td>${row.Serial_No}</td>
+                            <td>${row.Part_No}</td>
+                            <td>${row.Revision}</td>
+                            <td>${row.Quantity}</td>
+                            <td>${row.Location}</td>
+                            <td>${row.Add_Date}</td>
+                        </tr>`;
+                    }
                 });
                 table += '</tbody></table>';
                 document.getElementById('containers-table').innerHTML = table;
@@ -39,28 +51,51 @@ async function getContainersByPartNo() {
 
                         const index = cells[0].textContent.trim();
                         const serial = cells[1].textContent.trim();
-                        const quantity = cells[2].textContent.trim();
-                        const location = cells[3].textContent.trim();
+                        const part_no = cells[2].textContent.trim();
+                        const revision = cells[3].textContent.trim();
+                        const quantity = cells[4].textContent.trim();
+                        const location = cells[5].textContent.trim();
+                        const add_date = cells[6].textContent.trim();
 
-                        console.log(index, serial, quantity, location);
+                        console.log(index, serial, part_no, revision, quantity, location, add_date);
 
                         if (workcenter_input.value.length < 1) {
                             alert("Please enter the destination workcenter");
                             return;
                         }
-                        container = {"serial_no": serial, "quantity": quantity, "location": location, "workcenter": workcenter_input.value }
-                        console.log("row clicked: ", index);
-                        fetch(`/part/${part_no_input.value}/${serial}`, {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json"
-                            },
-                            body: container,
-                        }).then(response => response.json())
-                          .then(data => {
-                            console.log(data);
-                            sendrequest(container);
-                        });
+
+                        // Toggle strikethrough style
+                        if (this.style.textDecoration === "line-through") {
+                            // If already crossed, uncross it
+                            this.style.textDecoration = "none";
+                            this.style.color = "black";
+                            // Send delete signal to driver
+                            const deleteSignal = {
+                                type: "delete",
+                                serial_no: serial,
+                                part_no: part_no,
+                                revision: revision
+                            };
+                            console.log("deleteSignal: ", deleteSignal);
+                            socket.send(JSON.stringify(deleteSignal));
+                        } else {
+                            // If not crossed, cross it
+                            this.style.textDecoration = "line-through";
+                            this.style.color = "gray";
+                            container = {"serial_no": serial, "quantity": quantity, "location": location, "workcenter": workcenter_input.value, "part_no": part_no, "revision": revision, "add_date": add_date }
+                            console.log("row clicked: ", index);
+                            fetch(`/part/${part_no_input.value}/${serial}`, {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json"
+                                },
+                                body: JSON.stringify(container),
+                            }).then(response => response.json())
+                              .then(data => {
+                                console.log(data);
+                                sendrequest(container);
+                            });
+                        }
                     });
                 });
             });
