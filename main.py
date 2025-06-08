@@ -67,8 +67,24 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
     rows = response.json().get("tables")[0].get("rows", [])
     df = pd.DataFrame(rows, columns=columns)
     df = df.sort_values(by="Add_Date")
-    print("[get_containers_by_part_no] df:", df['Add_Date'])
+    print("[get_containers_by_part_no] df:", df[['Serial_No', 'Part_No', 'Revision', 'Quantity', 'Location']])
     return df.to_dict(orient="records")
+
+async def get_prod_locations() -> List[str]:
+    prod_locations_id = 18120
+    url = f"{ERP_API_BASE}{prod_locations_id}/execute"
+    payload = json.dumps({
+        "inputs": {
+            "Location_Type": "Production Storage_IN"
+        }
+    })
+    response = requests.request("POST", url, headers=headers, data=payload)
+    # print("[get_prod_locations] response:", response.json())
+    columns = response.json().get("tables")[0].get("columns", [])
+    rows = response.json().get("tables")[0].get("rows", [])
+    df = pd.DataFrame(rows, columns=columns)
+    print(df)
+    return df['Location'].tolist()
 
 # --- API Routes ---
 
@@ -80,7 +96,21 @@ def test():
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    # # Make your API call here
+    # try:
+    #     # Example API call - replace with your actual API endpoint
+    #     api_response = requests.get("YOUR_API_ENDPOINT", headers=headers)
+    #     api_data = api_response.json()
+    # except Exception as e:
+    #     print(f"API call failed: {e}")
+    #     api_data = None
+    locations = await get_prod_locations() + ['J-B3']
+    # Pass both the request and API data to the template
+    print("locations", locations)
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "prod_locations": locations
+    })
 
 
 @app.post("/part/{part_no}", response_class=JSONResponse)
@@ -96,9 +126,22 @@ async def request_serial_no(request: Request, part_no: str, serial_no: str):
     return JSONResponse(content={"message": "Success"})
 
 
-@app.get("/requests")
+@app.get("/requests", response_class=HTMLResponse)
 async def get_requests(request: Request):
-    return templates.TemplateResponse("driver.html", {"request": request})
+    # Make your API call here
+    try:
+        # Example API call - replace with your actual API endpoint
+        api_response = requests.get("YOUR_API_ENDPOINT", headers=headers)
+        api_data = api_response.json()
+    except Exception as e:
+        print(f"API call failed: {e}")
+        api_data = None
+
+    # Pass both the request and API data to the template
+    return templates.TemplateResponse("driver.html", {
+        "request": request,
+        "api_data": api_data
+    })
 
 
 @app.websocket("/ws")
@@ -114,3 +157,20 @@ async def websocket_endpoint(websocket: WebSocket):
                     await conn.send_text(data)
     except WebSocketDisconnect:
         active_connections.remove(websocket)
+
+@app.get("/barcode/{location}", response_class=JSONResponse)
+async def get_barcode(location: str):
+    try:
+        # Replace this with your actual API call to get the barcode
+        # Example:
+        # barcode_api_url = f"YOUR_BARCODE_API_URL/{location}"
+        # response = requests.get(barcode_api_url, headers=headers)
+        # barcode = response.json().get("barcode")
+        
+        # For now, returning a mock barcode
+        barcode = f"BC-{location}"
+        
+        return JSONResponse(content={"barcode": barcode})
+    except Exception as e:
+        print(f"Error fetching barcode: {e}")
+        return JSONResponse(content={"barcode": "N/A"})

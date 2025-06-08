@@ -19,6 +19,32 @@ body, html {
     width: 130px;
 }
 
+.nav-button {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    padding: 8px 16px;
+    background-color: #007bff;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: 500;
+    z-index: 1000;
+    transition: background-color 0.2s;
+}
+
+.nav-button:hover {
+    background-color: #0056b3;
+    color: white;
+    text-decoration: none;
+}
+
+@media (max-width: 768px) {
+    .nav-button {
+        top: 60px;
+        left: 20px;
+    }
+}
 
 .input-box {
     width: 157px;
@@ -52,6 +78,7 @@ body, html {
 td, th {
     padding-right: 50px;
     padding-bottom: 10px;
+    font-size: 20px;
 }
 
 #containers-table {
@@ -61,8 +88,10 @@ td, th {
     /* display: block; */
 }
 #containers-table tr {
+    font-size: 24px;
     padding-bottom: 10px;
 }
 #containers-table th, td {
     padding-right: 20px;
+    font-size: 20px;
 }

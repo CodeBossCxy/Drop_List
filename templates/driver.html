@@ -12,6 +12,7 @@
     <body>
         <div class="container-fluid">
             <img src="{{ url_for('static', path='assets/Vintech_Logo.jpg')}}" class="logo-fixed" alt="Vintech Logo"/>
+            <a href="/" class="nav-button">Switch to Pick List View</a>
             <div class="position-fixed start-50 translate-middle-x mt-3 p-4 bg-white rounded shadow" style="top:30px; width: 80%; max-width: 500px;">
                 <div class="d-flex align-items-center gap-3 w-100">
                     <h4 class="mb-0 me-2" style="white-space: nowrap;">Ongoing Requests:</h4>
@@ -20,7 +21,7 @@
         <ul id="messages">
             <table id="containerTable" style="width: 100%;" border="1">
                 <thead>
-                <tr><th>Serial No</th><th>Quantity</th><th>Location</th><th>Deliver to</th></tr>
+                <tr><th>Serial No</th><th>Part No</th><th>Revision</th><th>Quantity</th><th>Location</th><th>Barcode</th><th>Deliver to</th></tr>
                 </thead>
                 <tbody id="containerTableBody">
                 <!-- Rows will be appended here -->
