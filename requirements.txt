@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+gunicorn
+python-dotenv
+requests
+aiofiles           # if you serve static files or need async file I/O
+jinja2             # if you use templates
+sqlalchemy         # if you use ORM
+databases          # async db helper
+pandas
+psycopg2-binary    # PostgreSQL driver 
