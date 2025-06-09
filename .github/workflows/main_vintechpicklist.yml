@@ -73,10 +73,3 @@ jobs:
       # Add small delay:
       - name: Wait to let app warm up
         run: sleep 10
-      
-      - name: Clear wwwroot before deploy
-        run: |
-          curl -X POST -u ${{ secrets.AZURE_USERNAME }}:${{ secrets.AZURE_PASSWORD }} \
-          https://vintechpicklist.scm.azurewebsites.net/api/command \
-          -d '{"command": "rm -rf /home/site/wwwroot/*"}' \
-          -H "Content-Type: application/json"
