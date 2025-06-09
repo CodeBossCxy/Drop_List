@@ -76,6 +76,6 @@ jobs:
         
       - name: Extract artifact
         run: |
-          tar -xzf output.tar.gz
+          tar -xzf /wwwroot/output.tar.gz
           ls -la output  # Just to double-check during the build
           cp -r output/* ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
