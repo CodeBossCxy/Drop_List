@@ -69,3 +69,7 @@ jobs:
           app-name: 'VintechPickList'
           slot-name: 'Production'
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_328CB636A06D4562A2DBEA5C165C315E }}
+      
+      # Add small delay:
+      - name: Wait to let app warm up
+        run: sleep 10
