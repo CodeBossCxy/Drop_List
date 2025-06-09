@@ -73,3 +73,9 @@ jobs:
       # Add small delay:
       - name: Wait to let app warm up
         run: sleep 10
+        
+      - name: Extract artifact
+        run: |
+          tar -xzf output.tar.gz
+          ls -la output  # Just to double-check during the build
+          cp -r output/* ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
