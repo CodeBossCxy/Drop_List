@@ -11,13 +11,30 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import pandas as pd
 import base64
+import pyodbc
+from dotenv import load_dotenv
+from decimal import Decimal
+
+load_dotenv()
+
+# Get connection parameters from environment variables
+server = os.getenv('AZURE_SQL_SERVER')
+database = os.getenv('AZURE_SQL_DATABASE')
+username = os.getenv('AZURE_SQL_USERNAME')
+password = os.getenv('AZURE_SQL_PASSWORD')
+
+print("server", server)
+print("database", database)
+print("username", username)
+print("password", password)
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-
-
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
+
+# global counter
+req_id = 0
 
 # your existing routes...
 
@@ -26,13 +43,57 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
 
+
+# Validate required environment variables
+required_vars = ['AZURE_SQL_SERVER', 'AZURE_SQL_DATABASE', 'AZURE_SQL_USERNAME', 'AZURE_SQL_PASSWORD']
+missing_vars = [var for var in required_vars if not os.getenv(var)]
+
+if missing_vars:
+    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
+class AzureSQLConnection:
+    def __init__(self):
+        self.connection_string = f'''
+            DRIVER={{ODBC Driver 18 for SQL Server}};
+            SERVER=tcp:{server}.database.windows.net,1433;
+            DATABASE={database};
+            Uid={username};
+            Pwd={password};
+            Encrypt=yes;
+            TrustServerCertificate=no;
+            Connection Timeout=30;
+        '''
+        self.conn = None
+    
+    def __enter__(self):
+        self.conn = pyodbc.connect(self.connection_string)
+        return self.conn
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.conn:
+            self.conn.close()
+
+# Usage example with context manager
+try:
+    with AzureSQLConnection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES")
+        table_count = cursor.fetchone()[0]
+        print(f"Connected successfully! Database has {table_count} tables.")
+        
+except pyodbc.Error as e:
+    print(f"Database error: {e}")
+except Exception as e:
+    print(f"General error: {e}")
+
+
 # --- Config ---
 ERP_API_BASE = "https://Vintech-CZ.on.plex.com/api/datasources/"
 
-username = "VintechCZWS@plex.com"
-password = "09c11ed-40b3-4"
+plex_username = "VintechCZWS@plex.com"
+plex_password = "09c11ed-40b3-4"
 
-credentials = f"{username}:{password}"
+credentials = f"{plex_username}:{plex_password}"
 bytes = credentials.encode('utf-8')
 encoded_credentials = base64.b64encode(bytes).decode('utf-8')
 
@@ -69,11 +130,24 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
         }
     })
     response = requests.request("POST", url, headers=headers, data=payload)
-    # print("[get_containers_by_part_no] response:", response.json())
     columns = response.json().get("tables")[0].get("columns", [])
     rows = response.json().get("tables")[0].get("rows", [])
     df = pd.DataFrame(rows, columns=columns)
     df = df.sort_values(by="Add_Date")
+    
+    # Get existing serial numbers from database
+    try:
+        with AzureSQLConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT serial_no FROM REQUESTS")
+            existing_serials = {row[0] for row in cursor.fetchall()}
+            
+            # Filter out containers that already exist in database
+            df = df[~df['Serial_No'].isin(existing_serials)]
+            
+    except Exception as e:
+        print(f"Error checking existing containers: {e}")
+    
     print("[get_containers_by_part_no] df:", df[['Serial_No', 'Part_No', 'Revision', 'Quantity', 'Location']])
     return df.to_dict(orient="records")
 
@@ -128,8 +202,31 @@ async def get_containers(request: Request, part_no: str):
 
 @app.post("/part/{part_no}/{serial_no}", response_class=JSONResponse)
 async def request_serial_no(request: Request, part_no: str, serial_no: str):
+    global req_id
     print("part_no", part_no)
     print("serial_no", serial_no)
+    data = await request.json()
+    print("req_id", req_id)
+    print("data", data)
+
+    try:
+        with AzureSQLConnection() as conn:
+            
+            print(req_id, part_no, serial_no, data['location'], data['workcenter'], data['req_time'])
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (req_id, serial_no, part_no, data['revision'], data['quantity'], data['location'], data['workcenter'], data['req_time']))
+            conn.commit()
+
+            if cursor.rowcount == 1:
+                print("Request inserted successfully")
+                req_id += 1
+            else:
+                print("Request insertion failed")
+
+    except Exception as e:
+        print(f"Error inserting request: {e}")
+        return JSONResponse(content={"message": "Error"})
+
     return JSONResponse(content={"message": "Success"})
 
 
@@ -181,3 +278,62 @@ async def get_barcode(location: str):
     except Exception as e:
         print(f"Error fetching barcode: {e}")
         return JSONResponse(content={"barcode": "N/A"})
+
+@app.get("/api/requests", response_class=JSONResponse)
+async def get_all_requests():
+    try:
+        print("Attempting to connect to database...")
+        with AzureSQLConnection() as conn:
+            print("Connected to database successfully")
+            cursor = conn.cursor()
+            print("Executing SQL query...")
+            cursor.execute("""
+                SELECT *
+                FROM REQUESTS 
+                ORDER BY req_time DESC
+            """)
+            print("Query executed successfully")
+            columns = [column[0] for column in cursor.description]
+            print(f"Columns found: {columns}")
+            requests = []
+            rows = cursor.fetchall()
+            print(f"Number of rows fetched: {len(rows)}")
+            
+            for row in rows:
+                # Convert row to dict and handle datetime serialization
+                request_dict = {}
+                for i, value in enumerate(row):
+                    if isinstance(value, datetime):
+                        request_dict[columns[i]] = value.isoformat()
+                    elif isinstance(value, Decimal):
+                        request_dict[columns[i]] = float(value)
+                    else:
+                        request_dict[columns[i]] = value
+                requests.append(request_dict)
+            
+            print("Successfully processed all rows")
+            return JSONResponse(content=requests)
+    except Exception as e:
+        print(f"Error fetching requests: {str(e)}")
+        print(f"Error type: {type(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/requests/{serial_no}", response_class=JSONResponse)
+async def delete_request(serial_no: str):
+    try:
+        with AzureSQLConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM REQUESTS WHERE serial_no = ?", (serial_no,))
+            conn.commit()
+            
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Request not found")
+                
+            return JSONResponse(content={"message": "Request deleted successfully"})
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"Error deleting request: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")

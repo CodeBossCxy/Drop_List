@@ -1,5 +1,4 @@
 async function getContainersByPartNo() {
-
     const part_no_input = document.getElementById("part-no-input");
     // console.log("part_no_input", part_no_input);
     part_no_input.addEventListener("keydown", async (e) => {
@@ -46,19 +45,7 @@ async function getContainersByPartNo() {
                 table += '</tbody></table>';
                 document.getElementById('containers-table').innerHTML = table;
                 
-                // Restore clicked state from localStorage
-                const clickedRows = JSON.parse(localStorage.getItem('clickedRows') || '{}');
-                
                 document.querySelectorAll('.clickable-row').forEach(row => {
-                    const cells = row.querySelectorAll("td");
-                    const serial = cells[1].textContent.trim();
-                    
-                    // Restore clicked state if it exists
-                    if (clickedRows[serial]) {
-                        row.style.textDecoration = "line-through";
-                        row.style.color = "gray";
-                    }
-                    
                     row.addEventListener('click', function () {
                         const cells = this.querySelectorAll("td");
 
@@ -77,59 +64,34 @@ async function getContainersByPartNo() {
                             return;
                         }
 
-                        // Get current clicked state from localStorage
-                        const clickedRows = JSON.parse(localStorage.getItem('clickedRows') || '{}');
-
-                        // Toggle strikethrough style
-                        if (this.style.textDecoration === "line-through") {
-                            // If already crossed, uncross it
-                            this.style.textDecoration = "none";
-                            this.style.color = "black";
-                            // Remove from localStorage
-                            delete clickedRows[serial];
-                            // Send delete signal to driver
-                            const deleteSignal = {
-                                type: "delete",
-                                serial_no: serial,
-                                part_no: part_no,
-                                revision: revision
-                            };
-                            console.log("deleteSignal: ", deleteSignal);
-                            if (window.currentSocket && window.currentSocket.readyState === WebSocket.OPEN) {
-                                window.currentSocket.send(JSON.stringify(deleteSignal));
-                            } else {
-                                console.warn("WebSocket is not open. Cannot send message.");
-                            }
-                        } else {
-                            // If not crossed, cross it
-                            this.style.textDecoration = "line-through";
-                            this.style.color = "gray";
-                            // Add to localStorage
-                            clickedRows[serial] = {
-                                part_no: part_no,
-                                revision: revision,
-                                quantity: quantity,
-                                location: location,
-                                workcenter: workcenter_input.value,
-                                add_date: add_date
-                            };
-                            container = {"serial_no": serial, "quantity": quantity, "location": location, "workcenter": workcenter_input.value, "part_no": part_no, "revision": revision, "add_date": add_date }
-                            console.log("row clicked: ", index);
-                            fetch(`/part/${part_no_input.value}/${serial}`, {
-                                method: "POST",
-                                headers: {
-                                    "Content-Type": "application/json"
-                                },
-                                body: JSON.stringify(container),
-                            }).then(response => response.json())
-                              .then(data => {
-                                console.log(data);
-                                sendrequest(container);
-                            });
-                        }
+                        const req_time = new Date().toISOString();
+                        console.log('User clicked at:', req_time);
+                        container = {
+                            "serial_no": serial, 
+                            "quantity": quantity, 
+                            "location": location, 
+                            "workcenter": workcenter_input.value, 
+                            "part_no": part_no, 
+                            "revision": revision, 
+                            "req_time": req_time
+                        };
                         
-                        // Save updated clicked state to localStorage
-                        localStorage.setItem('clickedRows', JSON.stringify(clickedRows));
+                        fetch(`/part/${part_no_input.value}/${serial}`, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify(container),
+                        }).then(response => response.json())
+                          .then(data => {
+                            console.log(data);
+                            // Remove the row from the table
+                            this.remove();
+                            // Update row numbers
+                            document.querySelectorAll('.clickable-row').forEach((row, idx) => {
+                                row.cells[0].textContent = idx + 1;
+                            });
+                        });
                     });
                 });
             });
@@ -137,36 +99,36 @@ async function getContainersByPartNo() {
     });
 }
 
-function sendrequest(container){
-    // const socket = new WebSocket("ws://localhost:8000/ws");
-    if (window.currentSocket && window.currentSocket.readyState === WebSocket.OPEN) {
-        window.currentSocket.send(JSON.stringify(container));
-    } else {
-        console.warn("WebSocket is not open. Cannot send message.");
-    }
-}
+// function sendrequest(container){
+//     // const socket = new WebSocket("ws://localhost:8000/ws");
+//     if (window.currentSocket && window.currentSocket.readyState === WebSocket.OPEN) {
+//         window.currentSocket.send(JSON.stringify(container));
+//     } else {
+//         console.warn("WebSocket is not open. Cannot send message.");
+//     }
+// }
 
-function createWebSocket() {
-    const socket = new WebSocket("wss://10.1.3.54:8002/ws");
+// function createWebSocket() {
+//     const socket = new WebSocket("wss://10.1.3.54:8002/ws");
 
-    socket.onopen = () => {
-        console.log("Connection Established");
-    };
+//     socket.onopen = () => {
+//         console.log("Connection Established");
+//     };
 
-    socket.onclose = (event) => {
-        console.log("WebSocket closed, attempting to reconnect...", event.reason);
-        setTimeout(createWebSocket, 1000); // reconnect after 1 second
-    };
+//     socket.onclose = (event) => {
+//         console.log("WebSocket closed, attempting to reconnect...", event.reason);
+//         setTimeout(createWebSocket, 1000); // reconnect after 1 second
+//     };
 
-    socket.onerror = (e) => {
-        console.error("WebSocket error", e);
-    };
+//     socket.onerror = (e) => {
+//         console.error("WebSocket error", e);
+//     };
 
-    window.currentSocket = socket;
-}
+//     window.currentSocket = socket;
+// }
 
-// Initialize websocket
-createWebSocket();
+// // Initialize websocket
+// createWebSocket();
 
 
 getContainersByPartNo();

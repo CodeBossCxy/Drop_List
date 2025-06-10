@@ -18,34 +18,52 @@ function createRowElement(data) {
         <td>${data.quantity}</td>
         <td>${data.location}</td>
         <td><img src="${getBarcodeUrl(data.location)}" alt="Barcode for ${data.location}" style="height: 50px;"></td>
-        <td>${data.workcenter}</td>
+        <td>${data.deliver_to}</td>
         <td><button class="delete-btn">Done</button></td>`;
     
-    row.querySelector(".delete-btn").addEventListener("click", () => {
-        const tbody = document.getElementById("containerTableBody");
-        tbody.removeChild(row);
-        // Remove from localStorage when done
-        const storedRows = JSON.parse(localStorage.getItem('driverRows') || '{}');
-        delete storedRows[data.serial_no];
-        localStorage.setItem('driverRows', JSON.stringify(storedRows));
+    row.querySelector(".delete-btn").addEventListener("click", async () => {
+        try {
+            const response = await fetch(`/api/requests/${data.serial_no}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                const tbody = document.getElementById("containerTableBody");
+                tbody.removeChild(row);
+            } else {
+                console.error('Failed to delete request');
+            }
+        } catch (error) {
+            console.error('Error deleting request:', error);
+        }
     });
 
     return row;
 }
 
-// Function to restore rows from localStorage
-function restoreRows() {
-    const storedRows = JSON.parse(localStorage.getItem('driverRows') || '{}');
-    const tbody = document.getElementById("containerTableBody");
-    
-    Object.values(storedRows).forEach(data => {
-        const row = createRowElement(data);
-        tbody.appendChild(row);
-    });
+// Function to fetch and display requests
+async function fetchAndDisplayRequests() {
+    try {
+        const response = await fetch('/api/requests');
+        const requests = await response.json();
+        
+        const tbody = document.getElementById("containerTableBody");
+        tbody.innerHTML = ''; // Clear existing rows
+        
+        requests.forEach(data => {
+            const row = createRowElement(data);
+            tbody.appendChild(row);
+        });
+    } catch (error) {
+        console.error('Error fetching requests:', error);
+    }
 }
 
-// Restore rows when page loads
-document.addEventListener('DOMContentLoaded', restoreRows);
+// Fetch requests when page loads
+document.addEventListener('DOMContentLoaded', fetchAndDisplayRequests);
+
+// Set up polling to refresh data every 5 seconds
+setInterval(fetchAndDisplayRequests, 5000);
 
 socket.onmessage = function(event) {
     const t = document.getElementById("messages");
