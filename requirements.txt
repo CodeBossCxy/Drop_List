@@ -8,4 +8,5 @@ jinja2             # if you use templates
 sqlalchemy         # if you use ORM
 databases          # async db helper
 pandas
-psycopg2-binary    # PostgreSQL driver 
+psycopg2-binary    # PostgreSQL driver
+pyodbc
