@@ -1,4 +1,4 @@
-const socket = new WebSocket("ws://10.1.3.54:8002/ws");
+const socket = new WebSocket("wss://10.1.3.54:8002/ws");
 const messages = document.getElementById("messages");
 
 // Function to get barcode image URL for a location

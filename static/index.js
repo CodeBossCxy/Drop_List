@@ -95,7 +95,11 @@ async function getContainersByPartNo() {
                                 revision: revision
                             };
                             console.log("deleteSignal: ", deleteSignal);
-                            socket.send(JSON.stringify(deleteSignal));
+                            if (window.currentSocket && window.currentSocket.readyState === WebSocket.OPEN) {
+                                window.currentSocket.send(JSON.stringify(deleteSignal));
+                            } else {
+                                console.warn("WebSocket is not open. Cannot send message.");
+                            }
                         } else {
                             // If not crossed, cross it
                             this.style.textDecoration = "line-through";
@@ -135,24 +139,34 @@ async function getContainersByPartNo() {
 
 function sendrequest(container){
     // const socket = new WebSocket("ws://localhost:8000/ws");
-    socket.send(JSON.stringify(container));
+    if (window.currentSocket && window.currentSocket.readyState === WebSocket.OPEN) {
+        window.currentSocket.send(JSON.stringify(container));
+    } else {
+        console.warn("WebSocket is not open. Cannot send message.");
+    }
 }
 
-const socket = new WebSocket("ws://10.1.3.54:8002/ws");
-socket.onopen = () => {
-    console.log("Connection Established");
+function createWebSocket() {
+    const socket = new WebSocket("wss://10.1.3.54:8002/ws");
+
+    socket.onopen = () => {
+        console.log("Connection Established");
+    };
+
+    socket.onclose = (event) => {
+        console.log("WebSocket closed, attempting to reconnect...", event.reason);
+        setTimeout(createWebSocket, 1000); // reconnect after 1 second
+    };
+
+    socket.onerror = (e) => {
+        console.error("WebSocket error", e);
+    };
+
+    window.currentSocket = socket;
 }
 
-socket.onclose = (event) => {
-    console.log("WebSocket closed, attempting to reconnect...", event.reason);
-    setTimeout(createWebSocket, 1000); // reconnect after 1 second
-};
-
-socket.onerror = (e) => {
-    console.error("WebSocket error", e);
-};
+// Initialize websocket
+createWebSocket();
 
 
 getContainersByPartNo();
-
-
