@@ -26,8 +26,13 @@
     </script>
 </head>
 <body>
-    <div class="container-fluid">
+    <!-- Loading Spinner -->
+    <div class="loading-overlay" id="loadingOverlay"></div>
+    <div class="loading-spinner" id="loadingSpinner">
+        <div class="spinner"></div>
+    </div>
 
+    <div class="container-fluid">
         <!-- Logo -->
         <img src="/static/assets/Vintech_Logo.jpg" class="logo-fixed" alt="Vintech Logo"/>
 
@@ -37,7 +42,6 @@
         <!-- Input Box -->
         <div class="position-fixed start-50 translate-middle-x mt-3 p-4 bg-white rounded shadow" style="top:30px; width: 80%; max-width: 1200px;">
             <div class="d-flex align-items-center gap-3 w-100">
-
                 <h3 class="mb-0 me-2" style="white-space: nowrap;">Workcenter:</h3>
                 <input type="text" class="form-control w-50" id="Workcenter-input"/>
 
@@ -46,7 +50,6 @@
 
                 <h3 class="mb-0 me-2" style="white-space: nowrap;">Revision:</h3>
                 <input type="text" class="form-control w-25" id="shipper-number-input"/>
-
             </div>
         </div>
 

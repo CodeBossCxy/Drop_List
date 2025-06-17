@@ -1,3 +1,45 @@
+// Loading spinner functions
+function showLoading() {
+    console.log("Showing loading spinner");
+    document.getElementById('loadingSpinner').style.display = 'block';
+    document.getElementById('loadingOverlay').style.display = 'block';
+}
+
+function hideLoading() {
+    console.log("Hiding loading spinner");
+    document.getElementById('loadingSpinner').style.display = 'none';
+    document.getElementById('loadingOverlay').style.display = 'none';
+}
+
+// Modify your existing fetch calls to use the loading spinner
+async function fetchContainers(partNo) {
+    showLoading();
+    try {
+        const response = await fetch(`/part/${partNo}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        const data = await response.json();
+        // Handle your data here
+        return data;
+    } catch (error) {
+        console.error('Error:', error);
+    } finally {
+        hideLoading();
+    }
+}
+
+// Add event listeners to your inputs
+document.getElementById('part-no-input').addEventListener('keydown', async (e) => {
+    const partNo = e.target.value;
+    if (partNo && e.key === "Enter") {
+        const data = await fetchContainers(partNo);
+        // Update your UI with the data
+    }
+});
+
 async function getContainersByPartNo() {
     const part_no_input = document.getElementById("part-no-input");
     // console.log("part_no_input", part_no_input);
