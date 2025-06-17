@@ -135,7 +135,7 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
     columns = response.json().get("tables")[0].get("columns", [])
     rows = response.json().get("tables")[0].get("rows", [])
     df = pd.DataFrame(rows, columns=columns)
-    df = df.sort_values(by="Add_Date")
+    df = df.sort_values(by=["Add_Date", "Serial_No"], ascending=[True, False])
     
     # Get existing serial numbers from database
     try:
@@ -144,14 +144,14 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
             cursor.execute("SELECT serial_no FROM REQUESTS")
             existing_serials = {row[0] for row in cursor.fetchall()}
             
-            # Filter out containers that already exist in database
-            df = df[~df['Serial_No'].isin(existing_serials)]
+            # Add isRequested column instead of filtering
+            df['isRequested'] = df['Serial_No'].isin(existing_serials)
             
     except Exception as e:
         print(f"Error checking existing containers: {e}")
+        df['isRequested'] = False
     
-    print("[get_containers_by_part_no] df:", df[['Serial_No', 'Part_No', 'Revision', 'Quantity', 'Location']])
-    # print(type(df))
+    print("[get_containers_by_part_no] df:", df[['Serial_No', 'Part_No', 'Revision', 'Quantity', 'Location', 'isRequested']])
     df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
     return df.to_dict(orient="records")
 
