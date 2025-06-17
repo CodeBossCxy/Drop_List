@@ -10,3 +10,5 @@ databases          # async db helper
 pandas
 psycopg2-binary    # PostgreSQL driver
 pyodbc
+numpy
+fastapi-encoders

@@ -14,6 +14,8 @@ import base64
 import pyodbc
 from dotenv import load_dotenv
 from decimal import Decimal
+from fastapi.encoders import jsonable_encoder
+import numpy as np
 
 load_dotenv()
 
@@ -149,6 +151,8 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
         print(f"Error checking existing containers: {e}")
     
     print("[get_containers_by_part_no] df:", df[['Serial_No', 'Part_No', 'Revision', 'Quantity', 'Location']])
+    # print(type(df))
+    df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
     return df.to_dict(orient="records")
 
 async def get_prod_locations() -> List[str]:
@@ -198,7 +202,8 @@ async def index(request: Request):
 async def get_containers(request: Request, part_no: str):
     print("part_no", part_no)
     containers = await get_containers_by_part_no(part_no)
-    return JSONResponse(content={"dataframe": containers})
+    # return JSONResponse(content={"dataframe": containers.to_dict(orient="records")})
+    return JSONResponse(content={"dataframe": jsonable_encoder(containers)})
 
 @app.post("/part/{part_no}/{serial_no}", response_class=JSONResponse)
 async def request_serial_no(request: Request, part_no: str, serial_no: str):
