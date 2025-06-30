@@ -135,7 +135,7 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
     columns = response.json().get("tables")[0].get("columns", [])
     rows = response.json().get("tables")[0].get("rows", [])
     df = pd.DataFrame(rows, columns=columns)
-    df = df.sort_values(by=["Add_Date", "Serial_No"], ascending=[True, False])
+    df = df.sort_values(by=["Add_Date", "Serial_No"], ascending=[True, True])
     
     # Get existing serial numbers from database
     try:

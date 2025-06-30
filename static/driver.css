@@ -15,28 +15,27 @@ body, html {
 .logo-fixed {
     position: fixed;
     top: 10px;
-    right: 20px;
-    width: 130px;
+    left: 10px;
+    width: 150px;
+    height: auto;
+    z-index: 1000;
 }
 
 .nav-button {
     position: fixed;
     top: 20px;
-    left: 20px;
-    padding: 8px 16px;
+    right: 20px;
+    padding: 10px 20px;
     background-color: #007bff;
     color: white;
     text-decoration: none;
-    border-radius: 4px;
-    font-weight: 500;
+    border-radius: 5px;
     z-index: 1000;
-    transition: background-color 0.2s;
 }
 
 .nav-button:hover {
     background-color: #0056b3;
     color: white;
-    text-decoration: none;
 }
 
 @media (max-width: 768px) {
@@ -114,16 +113,23 @@ td, th {
 }
 
 .delete-btn {
-    background-color: #e74c3c;
+    padding: 6px 12px;
+    background-color: #007bff;
     color: white;
     border: none;
-    padding: 4px 8px;
-    cursor: pointer;
     border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background-color 0.2s;
 }
 
 .delete-btn:hover {
-    background-color: #c0392b;
+    background-color: #0056b3;
+}
+
+.delete-btn:disabled {
+    background-color: #6c757d;
+    cursor: not-allowed;
 }
 
 #containerTable img {
@@ -135,4 +141,70 @@ td, th {
 
 #containerTable td {
     vertical-align: middle;
+}
+
+/* Table styling */
+.table {
+    width: 100%;
+    margin: 0;
+    border-collapse: collapse;
+}
+
+.table th {
+    background-color: #f8f9fa;
+    font-weight: bold;
+    text-align: left;
+    padding: 12px;
+    border-bottom: 2px solid #dee2e6;
+    white-space: nowrap;
+}
+
+.table td tr {
+    padding-right: 20px;
+    vertical-align: middle;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.table tbody tr:hover {
+    background-color: #f5f5f5;
+}
+
+/* Barcode image styling */
+.barcode-img {
+    height: 50px;
+    width: auto;
+}
+
+/* Table responsive wrapper */
+.table-responsive {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Adding row animation */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.adding-row {
+    animation: fadeIn 0.5s ease-in;
+}
+
+/* Ensure the container takes full width */
+.container-fluid {
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+    margin: 0;
+}
+
+/* Table container styling */
+#containers-table {
+    margin-top: 50px; /* Increased margin to ensure it's below the header box */
+    width: 100%;
+    padding: 20px;
 }
