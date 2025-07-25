@@ -152,6 +152,10 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
         df['isRequested'] = False
     
     print("[get_containers_by_part_no] df:", df[['Serial_No', 'Part_No', 'Revision', 'Quantity', 'Location', 'isRequested']])
+    
+    # Filter out containers from locations starting with "J-B"
+    df = df[~df['Location'].str.startswith('J-B', na=False)]
+    
     df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
     return df.to_dict(orient="records")
 
