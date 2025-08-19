@@ -52,10 +52,10 @@ async def startup_event():
     """Start the background scheduler when the application starts"""
     logger.info("🚀 Starting automated cleanup scheduler...")
     
-    # Add the cleanup job to run every 30 minutes
+    # Add the cleanup job to run every 5 minutes
     scheduler.add_job(
         func=automated_container_cleanup,
-        trigger=IntervalTrigger(minutes=30),  # Every 30 minutes
+        trigger=IntervalTrigger(minutes=5),  # Every 5 minutes
         id='container_cleanup',
         name='Automated Container Cleanup',
         replace_existing=True,
@@ -263,7 +263,7 @@ async def check_container_current_location(serial_no: str) -> Optional[str]:
 
 async def automated_container_cleanup():
     """
-    Main automated cleanup function that runs every 30 minutes
+    Main automated cleanup function that runs every 5 minutes
     Checks if requested containers have moved to production locations and removes them
     """
     try:
