@@ -208,3 +208,77 @@ td, th {
     width: 100%;
     padding: 20px;
 }
+
+/* Manual Cleanup Button Styles */
+#manualCleanupBtn {
+    transition: all 0.3s ease;
+}
+
+#manualCleanupBtn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+#cleanupStatusBtn {
+    transition: all 0.3s ease;
+}
+
+#cleanupStatusBtn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+/* Cleanup Results Styling */
+#cleanupResults {
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.cleanup-result-table {
+    font-size: 0.9rem;
+}
+
+.production-location-badge {
+    font-size: 0.8rem;
+}
+
+/* Loading spinner for cleanup */
+.cleanup-loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Status indicators */
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* Responsive adjustments for cleanup controls */
+@media (max-width: 768px) {
+    .position-fixed[style*="top:30px"] .d-flex.justify-content-between {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1rem;
+    }
+    
+    .position-fixed[style*="top:30px"] h3 {
+        text-align: center;
+    }
+    
+    .position-fixed[style*="top:30px"] .d-flex.align-items-center.gap-3 {
+        justify-content: center;
+    }
+}

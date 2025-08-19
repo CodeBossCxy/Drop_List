@@ -16,6 +16,11 @@ from dotenv import load_dotenv
 from decimal import Decimal
 from fastapi.encoders import jsonable_encoder
 import numpy as np
+import asyncio
+import logging
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+import atexit
 
 load_dotenv()
 
@@ -33,6 +38,48 @@ print("password", password)
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize scheduler
+scheduler = AsyncIOScheduler()
+
+# Scheduler lifecycle management
+@app.on_event("startup")
+async def startup_event():
+    """Start the background scheduler when the application starts"""
+    logger.info("🚀 Starting automated cleanup scheduler...")
+    
+    # Add the cleanup job to run every 30 minutes
+    scheduler.add_job(
+        func=automated_container_cleanup,
+        trigger=IntervalTrigger(minutes=30),  # Every 30 minutes
+        id='container_cleanup',
+        name='Automated Container Cleanup',
+        replace_existing=True,
+        max_instances=1  # Prevent overlapping runs
+    )
+    
+    scheduler.start()
+    logger.info("✅ Scheduler started successfully")
+    
+    # Run initial cleanup after 2 minutes (to allow app to fully start)
+    scheduler.add_job(
+        func=automated_container_cleanup,
+        trigger='date',
+        run_date=datetime.now() + timedelta(minutes=2),
+        id='initial_cleanup',
+        name='Initial Container Cleanup'
+    )
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the scheduler when the application shuts down"""
+    logger.info("🛑 Shutting down scheduler...")
+    scheduler.shutdown()
+    logger.info("✅ Scheduler shut down successfully")
 
 
 # global counter
@@ -190,6 +237,199 @@ async def get_prod_locations() -> List[str]:
     df = pd.DataFrame(rows, columns=columns)
     print(df)
     return df['Location'].tolist()
+
+# --- Automated Cleanup Functions ---
+
+async def check_container_current_location(serial_no: str) -> Optional[str]:
+    """
+    Check the current location of a container by its serial number
+    Returns the current location or None if not found
+    """
+    try:
+        logger.info(f"🔍 Checking current location for container: {serial_no}")
+        container_data = await get_container_by_serial_no(serial_no)
+        
+        if container_data and len(container_data) > 0:
+            current_location = container_data[0].get('Location')
+            logger.info(f"📍 Container {serial_no} current location: {current_location}")
+            return current_location
+        else:
+            logger.warning(f"⚠️ Container {serial_no} not found in ERP system")
+            return None
+            
+    except Exception as e:
+        logger.error(f"❌ Error checking location for container {serial_no}: {e}")
+        return None
+
+async def automated_container_cleanup():
+    """
+    Main automated cleanup function that runs every 30 minutes
+    Checks if requested containers have moved to production locations and removes them
+    """
+    try:
+        logger.info("🧹 Starting automated container cleanup...")
+        
+        # Get all production locations
+        logger.info("📋 Fetching production locations...")
+        prod_locations = await get_prod_locations()
+        logger.info(f"✅ Found {len(prod_locations)} production locations: {prod_locations}")
+        
+        # Get all active requests from database
+        logger.info("🗄️ Fetching active requests from database...")
+        
+        with AzureSQLConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT req_id, serial_no, part_no, location, deliver_to, req_time 
+                FROM REQUESTS 
+                ORDER BY req_time DESC
+            """)
+            active_requests = cursor.fetchall()
+            
+        logger.info(f"📊 Found {len(active_requests)} active requests to check")
+        
+        containers_to_remove = []
+        
+        # Check each active request
+        for req_id, serial_no, part_no, stored_location, deliver_to, req_time in active_requests:
+            logger.info(f"🔍 Checking container: {serial_no} (stored location: {stored_location})")
+            
+            # Get current location from ERP
+            current_location = await check_container_current_location(serial_no)
+            
+            if current_location:
+                # Check if current location is in production locations
+                if current_location in prod_locations:
+                    logger.info(f"🎯 Container {serial_no} found in production location: {current_location}")
+                    containers_to_remove.append({
+                        'req_id': req_id,
+                        'serial_no': serial_no,
+                        'part_no': part_no,
+                        'stored_location': stored_location,
+                        'current_location': current_location,
+                        'deliver_to': deliver_to,
+                        'req_time': req_time
+                    })
+                else:
+                    logger.info(f"📍 Container {serial_no} still at non-production location: {current_location}")
+            else:
+                logger.warning(f"⚠️ Could not determine current location for container: {serial_no}")
+            
+            # Small delay to avoid overwhelming the ERP API
+            await asyncio.sleep(1)
+        
+        # Remove containers that are now in production locations
+        if containers_to_remove:
+            logger.info(f"🗑️ Removing {len(containers_to_remove)} containers that moved to production...")
+            
+            with AzureSQLConnection() as conn:
+                cursor = conn.cursor()
+                
+                for container in containers_to_remove:
+                    try:
+                        cursor.execute("DELETE FROM REQUESTS WHERE req_id = ?", (container['req_id'],))
+                        logger.info(f"✅ Removed container {container['serial_no']} from requests (moved to {container['current_location']})")
+                    except Exception as e:
+                        logger.error(f"❌ Error removing container {container['serial_no']}: {e}")
+                
+                conn.commit()
+                logger.info(f"✅ Successfully processed {len(containers_to_remove)} container removals")
+        else:
+            logger.info("✅ No containers need to be removed at this time")
+        
+        logger.info(f"🏁 Automated cleanup completed successfully. Checked {len(active_requests)} requests, removed {len(containers_to_remove)} containers")
+        
+    except Exception as e:
+        logger.error(f"❌ Error in automated cleanup: {e}")
+        import traceback
+        logger.error(f"📋 Traceback: {traceback.format_exc()}")
+
+async def manual_container_cleanup():
+    """
+    Manual version of the cleanup function for testing/debugging
+    Returns detailed results instead of just logging
+    """
+    try:
+        logger.info("🔧 Starting manual container cleanup...")
+        
+        results = {
+            'status': 'success',
+            'checked_requests': 0,
+            'removed_containers': 0,
+            'prod_locations': [],
+            'containers_removed': [],
+            'errors': []
+        }
+        
+        # Get production locations
+        prod_locations = await get_prod_locations()
+        results['prod_locations'] = prod_locations
+        
+        # Get active requests
+        with AzureSQLConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT req_id, serial_no, part_no, location, deliver_to, req_time 
+                FROM REQUESTS 
+                ORDER BY req_time DESC
+            """)
+            active_requests = cursor.fetchall()
+            
+        results['checked_requests'] = len(active_requests)
+        
+        containers_to_remove = []
+        
+        # Check each request
+        for req_id, serial_no, part_no, stored_location, deliver_to, req_time in active_requests:
+            try:
+                current_location = await check_container_current_location(serial_no)
+                
+                if current_location and current_location in prod_locations:
+                    container_info = {
+                        'req_id': req_id,
+                        'serial_no': serial_no,
+                        'part_no': part_no,
+                        'stored_location': stored_location,
+                        'current_location': current_location,
+                        'deliver_to': deliver_to,
+                        'req_time': req_time.isoformat() if isinstance(req_time, datetime) else str(req_time)
+                    }
+                    containers_to_remove.append(container_info)
+                    results['containers_removed'].append(container_info)
+                    
+            except Exception as e:
+                error_msg = f"Error checking container {serial_no}: {str(e)}"
+                logger.error(error_msg)
+                results['errors'].append(error_msg)
+            
+            await asyncio.sleep(0.5)  # Shorter delay for manual testing
+        
+        # Remove containers
+        if containers_to_remove:
+            with AzureSQLConnection() as conn:
+                cursor = conn.cursor()
+                
+                for container in containers_to_remove:
+                    try:
+                        cursor.execute("DELETE FROM REQUESTS WHERE req_id = ?", (container['req_id'],))
+                    except Exception as e:
+                        error_msg = f"Error removing container {container['serial_no']}: {str(e)}"
+                        results['errors'].append(error_msg)
+                
+                conn.commit()
+        
+        results['removed_containers'] = len(containers_to_remove)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error in manual cleanup: {e}")
+        return {
+            'status': 'error',
+            'message': str(e),
+            'checked_requests': 0,
+            'removed_containers': 0
+        }
 
 # --- API Routes ---
 
@@ -370,3 +610,88 @@ async def delete_request(serial_no: str):
     except Exception as e:
         print(f"Error deleting request: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+# --- Automated Cleanup API Endpoints ---
+
+@app.post("/api/cleanup/manual", response_class=JSONResponse)
+async def trigger_manual_cleanup():
+    """
+    Manual endpoint to trigger container cleanup for testing/debugging
+    Returns detailed results about what was cleaned up
+    """
+    try:
+        logger.info("🔧 Manual cleanup triggered via API")
+        results = await manual_container_cleanup()
+        return JSONResponse(content=results)
+    except Exception as e:
+        logger.error(f"Error in manual cleanup API: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/cleanup/status", response_class=JSONResponse)
+async def get_cleanup_status():
+    """
+    Get status information about the automated cleanup system
+    """
+    try:
+        # Get scheduler info
+        jobs = scheduler.get_jobs()
+        cleanup_job = next((job for job in jobs if job.id == 'container_cleanup'), None)
+        
+        status_info = {
+            'scheduler_running': scheduler.running,
+            'cleanup_job_active': cleanup_job is not None,
+            'next_run_time': None,
+            'jobs_count': len(jobs),
+            'last_cleanup_time': None  # You could store this in a file or database if needed
+        }
+        
+        if cleanup_job:
+            status_info['next_run_time'] = cleanup_job.next_run_time.isoformat() if cleanup_job.next_run_time else None
+        
+        # Get current database statistics
+        with AzureSQLConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM REQUESTS")
+            active_requests_count = cursor.fetchone()[0]
+            
+        status_info['active_requests_count'] = active_requests_count
+        
+        return JSONResponse(content=status_info)
+        
+    except Exception as e:
+        logger.error(f"Error getting cleanup status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/cleanup/logs", response_class=JSONResponse)
+async def get_cleanup_logs():
+    """
+    Get recent cleanup logs (if you want to implement log storage)
+    For now, returns basic information
+    """
+    try:
+        # This could be enhanced to return actual log entries
+        # For now, return basic system information
+        
+        prod_locations = await get_prod_locations()
+        
+        with AzureSQLConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) as total_requests, 
+                       MIN(req_time) as oldest_request,
+                       MAX(req_time) as newest_request
+                FROM REQUESTS
+            """)
+            stats = cursor.fetchone()
+        
+        return JSONResponse(content={
+            'production_locations': prod_locations,
+            'total_active_requests': stats[0] if stats else 0,
+            'oldest_request': stats[1].isoformat() if stats and stats[1] else None,
+            'newest_request': stats[2].isoformat() if stats and stats[2] else None,
+            'system_time': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting cleanup logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

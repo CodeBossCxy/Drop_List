@@ -238,6 +238,300 @@ document.addEventListener('DOMContentLoaded', fetchAndDisplayRequests);
 // Set up polling to refresh data every 5 seconds
 setInterval(fetchAndDisplayRequests, 5000);
 
+// --- Manual Cleanup Functions ---
+
+async function triggerManualCleanup() {
+    console.log('🧹 Manual cleanup triggered by user');
+    
+    const button = document.getElementById('manualCleanupBtn');
+    const resultsDiv = document.getElementById('cleanupResults');
+    const resultsContent = document.getElementById('cleanupResultsContent');
+    
+    // Show loading state
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running Cleanup...';
+    
+    // Show results area
+    resultsDiv.style.display = 'block';
+    resultsContent.innerHTML = `
+        <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <span>Running manual cleanup... This may take a few moments.</span>
+        </div>
+    `;
+    
+    try {
+        console.log('🌐 Making API call to /api/cleanup/manual');
+        const response = await fetch('/api/cleanup/manual', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const results = await response.json();
+        console.log('✅ Cleanup results received:', results);
+        
+        // Display results
+        displayCleanupResults(results);
+        
+        // Refresh the table to show removed items
+        setTimeout(fetchAndDisplayRequests, 1000);
+        
+    } catch (error) {
+        console.error('❌ Error during manual cleanup:', error);
+        resultsContent.innerHTML = `
+            <div class="alert alert-danger">
+                <strong>Error:</strong> ${error.message}
+                <br><small>Check the console for more details.</small>
+            </div>
+        `;
+    } finally {
+        // Reset button
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-broom"></i> Manual Cleanup';
+    }
+}
+
+async function getCleanupStatus() {
+    console.log('📊 Getting cleanup status');
+    
+    const button = document.getElementById('cleanupStatusBtn');
+    const resultsDiv = document.getElementById('cleanupResults');
+    const resultsContent = document.getElementById('cleanupResultsContent');
+    
+    // Show loading state
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+    
+    try {
+        const response = await fetch('/api/cleanup/status');
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const status = await response.json();
+        console.log('✅ Status received:', status);
+        
+        // Show results area
+        resultsDiv.style.display = 'block';
+        
+        // Display status
+        displayCleanupStatus(status);
+        
+    } catch (error) {
+        console.error('❌ Error getting status:', error);
+        resultsDiv.style.display = 'block';
+        resultsContent.innerHTML = `
+            <div class="alert alert-danger">
+                <strong>Error:</strong> ${error.message}
+            </div>
+        `;
+    } finally {
+        // Reset button
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-info-circle"></i> Status';
+    }
+}
+
+function displayCleanupResults(results) {
+    const resultsContent = document.getElementById('cleanupResultsContent');
+    
+    let html = '';
+    
+    if (results.status === 'success') {
+        const alertClass = results.removed_containers > 0 ? 'alert-success' : 'alert-info';
+        
+        html += `
+            <div class="alert ${alertClass}">
+                <strong>Cleanup Completed Successfully!</strong>
+                <ul class="mb-0 mt-2">
+                    <li>📊 Checked ${results.checked_requests} active requests</li>
+                    <li>🗑️ Removed ${results.removed_containers} containers</li>
+                    <li>📍 Found ${results.prod_locations.length} production locations</li>
+                </ul>
+            </div>
+        `;
+        
+        // Show removed containers details
+        if (results.containers_removed && results.containers_removed.length > 0) {
+            html += `
+                <div class="mt-3">
+                    <h6>🎯 Containers Removed (moved to production):</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Serial No</th>
+                                    <th>Part No</th>
+                                    <th>From Location</th>
+                                    <th>To Production Location</th>
+                                    <th>Deliver To</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+            
+            results.containers_removed.forEach(container => {
+                html += `
+                    <tr>
+                        <td>${container.serial_no}</td>
+                        <td>${container.part_no}</td>
+                        <td>${container.stored_location}</td>
+                        <td><span class="badge bg-success">${container.current_location}</span></td>
+                        <td>${container.deliver_to}</td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Show errors if any
+        if (results.errors && results.errors.length > 0) {
+            html += `
+                <div class="mt-3">
+                    <h6>⚠️ Warnings/Errors:</h6>
+                    <ul class="list-unstyled">
+            `;
+            results.errors.forEach(error => {
+                html += `<li class="text-warning">• ${error}</li>`;
+            });
+            html += `
+                    </ul>
+                </div>
+            `;
+        }
+        
+    } else {
+        html += `
+            <div class="alert alert-danger">
+                <strong>Cleanup Failed:</strong> ${results.message}
+            </div>
+        `;
+    }
+    
+    resultsContent.innerHTML = html;
+}
+
+function displayCleanupStatus(status) {
+    const resultsContent = document.getElementById('cleanupResultsContent');
+    
+    const nextRunTime = status.next_run_time ? new Date(status.next_run_time).toLocaleString() : 'Not scheduled';
+    
+    const html = `
+        <div class="row">
+            <div class="col-md-6">
+                <h6>🤖 Automated System Status</h6>
+                <ul class="list-unstyled">
+                    <li><strong>Scheduler Running:</strong> 
+                        <span class="badge ${status.scheduler_running ? 'bg-success' : 'bg-danger'}">
+                            ${status.scheduler_running ? 'Active' : 'Inactive'}
+                        </span>
+                    </li>
+                    <li><strong>Cleanup Job Active:</strong> 
+                        <span class="badge ${status.cleanup_job_active ? 'bg-success' : 'bg-warning'}">
+                            ${status.cleanup_job_active ? 'Yes' : 'No'}
+                        </span>
+                    </li>
+                    <li><strong>Next Automatic Run:</strong> ${nextRunTime}</li>
+                    <li><strong>Total Jobs:</strong> ${status.jobs_count}</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <h6>📊 Current Data</h6>
+                <ul class="list-unstyled">
+                    <li><strong>Active Requests:</strong> 
+                        <span class="badge bg-primary">${status.active_requests_count}</span>
+                    </li>
+                    <li><strong>System Time:</strong> ${new Date().toLocaleString()}</li>
+                </ul>
+                
+                <div class="mt-3">
+                    <button class="btn btn-sm btn-outline-info" onclick="getDetailedLogs()">
+                        <i class="fas fa-list"></i> View Detailed Info
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    resultsContent.innerHTML = html;
+}
+
+async function getDetailedLogs() {
+    console.log('📋 Getting detailed logs');
+    
+    try {
+        const response = await fetch('/api/cleanup/logs');
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const logs = await response.json();
+        console.log('✅ Logs received:', logs);
+        
+        displayDetailedLogs(logs);
+        
+    } catch (error) {
+        console.error('❌ Error getting logs:', error);
+        showAlert('Error', 'Failed to fetch detailed logs: ' + error.message, 'danger');
+    }
+}
+
+function displayDetailedLogs(logs) {
+    const resultsContent = document.getElementById('cleanupResultsContent');
+    
+    const oldestRequest = logs.oldest_request ? new Date(logs.oldest_request).toLocaleString() : 'None';
+    const newestRequest = logs.newest_request ? new Date(logs.newest_request).toLocaleString() : 'None';
+    
+    const html = `
+        <div class="row">
+            <div class="col-12">
+                <h6>📋 Detailed System Information</h6>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="text-muted">📍 Production Locations (${logs.production_locations.length})</h6>
+                        <div class="bg-light p-2 rounded mb-3" style="max-height: 200px; overflow-y: auto;">
+                            ${logs.production_locations.map(loc => `<span class="badge bg-secondary me-1 mb-1">${loc}</span>`).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <h6 class="text-muted">📊 Request Statistics</h6>
+                        <ul class="list-unstyled">
+                            <li><strong>Total Active Requests:</strong> ${logs.total_active_requests}</li>
+                            <li><strong>Oldest Request:</strong> ${oldestRequest}</li>
+                            <li><strong>Newest Request:</strong> ${newestRequest}</li>
+                            <li><strong>System Time:</strong> ${new Date(logs.system_time).toLocaleString()}</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="mt-3 text-center">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="getCleanupStatus()">
+                        <i class="fas fa-arrow-left"></i> Back to Status
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    resultsContent.innerHTML = html;
+}
+
 // socket.onopen = function(e) {
 //     console.log("WebSocket connection established");
 // };

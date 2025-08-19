@@ -11,3 +11,4 @@ pandas
 psycopg2-binary    # PostgreSQL driver
 pyodbc
 numpy
+apscheduler        # for automated background tasks
