@@ -123,6 +123,22 @@ class SerialNoRequest(BaseModel):
     serial_no: str
 
 # --- ERP Client ---
+async def get_container_by_serial_no(serial_no: str) -> List[str]:
+    container_by_serial_no_id = 4619
+    url = f"{ERP_API_BASE}{container_by_serial_no_id}/execute"
+    payload = json.dumps({
+        "inputs": {
+            "Serial_No": serial_no
+        }
+    })
+    response = requests.request("POST", url, headers=headers, data=payload)
+    print("-----response-----", response.json())
+    columns = response.json().get("tables")[0].get("columns", [])
+    rows = response.json().get("tables")[0].get("rows", [])
+    df = pd.DataFrame(rows, columns=columns)
+    print("-----df-----", df)
+    return df.to_dict(orient="records")
+
 async def get_containers_by_part_no(part_no: str) -> List[str]:
     containers_by_part_no_id = 8566
     url = f"{ERP_API_BASE}{containers_by_part_no_id}/execute"
@@ -237,6 +253,14 @@ async def request_serial_no(request: Request, part_no: str, serial_no: str):
         return JSONResponse(content={"message": "Error"})
 
     return JSONResponse(content={"message": "Success"})
+
+@app.post("/{serial_no}", response_class=JSONResponse)
+async def request_serial_no(request: Request, serial_no: str):
+    global req_id
+    print("serial_no", serial_no)
+    container = await get_container_by_serial_no(serial_no)
+    print("-----container-----", container)
+    return JSONResponse(content={"dataframe": jsonable_encoder(container)})
 
 
 @app.get("/requests", response_class=HTMLResponse)

@@ -46,6 +46,43 @@ body, html {
     }
 }
 
+/* Responsive layout for input fields */
+@media (max-width: 1200px) {
+    .position-fixed[style*="top:30px"] {
+        width: 90% !important;
+    }
+}
+
+@media (max-width: 992px) {
+    .position-fixed[style*="top:30px"] {
+        width: 95% !important;
+    }
+    
+    .position-fixed[style*="top:30px"] .d-flex.gap-2 {
+        gap: 1rem !important;
+    }
+    
+    .position-fixed[style*="top:30px"] h3 {
+        font-size: 1.1rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .position-fixed[style*="top:30px"] .d-flex.flex-wrap {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .position-fixed[style*="top:30px"] .d-flex.align-items-center {
+        margin-bottom: 0.5rem;
+    }
+    
+    .position-fixed[style*="top:30px"] h3 {
+        min-width: 100px;
+        font-size: 1rem;
+    }
+}
+
 .input-box {
     width: 157px;
     height: 30px;
@@ -94,6 +131,63 @@ td, th {
 #containers-table th, td {
     padding-right: 20px;
     font-size: 20px;
+}
+
+/* NUCLEAR GREEN STYLING - MAXIMUM SPECIFICITY TO OVERRIDE BOOTSTRAP */
+
+/* Ultra specific selectors for first row - using every possible combination */
+#containers-table table.table tbody tr:first-child,
+#containers-table table.table-hover tbody tr:first-child,
+#containers-table table tbody tr:first-child,
+#containers-table tbody tr:first-child,
+#containers-table tbody tr[data-first-row="true"],
+#containers-table tbody tr.first-container-row,
+#containers-table tbody tr.oldest-container,
+#containers-table tbody tr[data-row-index="0"],
+body #containers-table tbody tr:first-child,
+html body #containers-table tbody tr:first-child,
+#containers-table table.table tbody tr:first-child:hover,
+#containers-table table.table-hover tbody tr:first-child:hover,
+#containers-table tbody tr:first-child:hover,
+#containers-table tbody tr[data-first-row="true"]:hover,
+#containers-table tbody tr.first-container-row:hover,
+#containers-table tbody tr.oldest-container:hover {
+    background-color: #d4edda !important;
+    border-left: 4px solid #28a745 !important;
+    border: 2px solid #28a745 !important;
+}
+
+/* Ultra specific selectors for first row cells */
+#containers-table table.table tbody tr:first-child td,
+#containers-table table.table-hover tbody tr:first-child td,
+#containers-table table tbody tr:first-child td,
+#containers-table tbody tr:first-child td,
+#containers-table tbody tr[data-first-row="true"] td,
+#containers-table tbody tr.first-container-row td,
+#containers-table tbody tr.oldest-container td,
+#containers-table tbody tr[data-row-index="0"] td,
+body #containers-table tbody tr:first-child td,
+html body #containers-table tbody tr:first-child td,
+#containers-table table.table tbody tr:first-child:hover td,
+#containers-table table.table-hover tbody tr:first-child:hover td,
+#containers-table tbody tr:first-child:hover td,
+#containers-table tbody tr[data-first-row="true"]:hover td,
+#containers-table tbody tr.first-container-row:hover td,
+#containers-table tbody tr.oldest-container:hover td,
+#containers-table tbody tr:first-child td.first-row-cell,
+#containers-table tbody td[data-first-row-cell="true"] {
+    background-color: #d4edda !important;
+    color: #000 !important;
+}
+
+/* Backup selectors in case Bootstrap gets creative */
+tr[style*="background-color: #d4edda"] {
+    background-color: #d4edda !important;
+    border-left: 4px solid #28a745 !important;
+}
+
+td[style*="background-color: #d4edda"] {
+    background-color: #d4edda !important;
 }
 
 .loading-spinner {
