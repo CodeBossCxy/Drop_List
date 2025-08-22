@@ -689,7 +689,7 @@ class HistoryManager {
                 record.fulfillment_type,
                 record.current_location
             ].map(field => `\"${field}\"`).join(','))
-        ].join('\\n');
+        ].join('\r\n');
         
         // Create and trigger download
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
