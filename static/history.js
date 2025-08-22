@@ -95,6 +95,7 @@ class HistoryManager {
             this.updateStatsDashboard(stats);
             this.updateCharts(stats);
             this.updatePartPerformanceTable(stats.by_part_number);
+            this.updateShiftPerformanceTable(stats.by_shift);
             
             console.log('✅ Statistics loaded and displayed');
             
@@ -347,6 +348,46 @@ class HistoryManager {
                                 <td>${Math.round(part.max_fulfillment_minutes)}m</td>
                                 <td>
                                     ${this.getPerformanceBadge(part.avg_fulfillment_minutes)}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+        
+        container.innerHTML = tableHtml;
+    }
+    
+    updateShiftPerformanceTable(shiftStats) {
+        const container = document.getElementById('shiftPerformanceTable');
+        
+        if (!shiftStats || !Array.isArray(shiftStats) || shiftStats.length === 0) {
+            container.innerHTML = '<p class=\"text-muted\">No shift performance data available.</p>';
+            return;
+        }
+        
+        const tableHtml = `
+            <div class=\"table-responsive\">
+                <table class=\"table table-sm table-striped\">
+                    <thead class=\"table-light\">
+                        <tr>
+                            <th>Shift</th>
+                            <th>Time Range</th>
+                            <th>Fulfilled Count</th>
+                            <th>Avg Duration</th>
+                            <th>Performance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${shiftStats.map(shift => `
+                            <tr>
+                                <td><strong>${shift.shift}</strong></td>
+                                <td><small class=\"text-muted\">${shift.time_range}</small></td>
+                                <td><span class=\"badge bg-primary\">${shift.fulfilled_count}</span></td>
+                                <td>${Math.round(shift.avg_fulfillment_minutes)}m</td>
+                                <td>
+                                    ${this.getPerformanceBadge(shift.avg_fulfillment_minutes)}
                                 </td>
                             </tr>
                         `).join('')}

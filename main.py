@@ -60,6 +60,37 @@ def convert_to_czech_timezone(dt):
     czech_time = dt.astimezone(CZECH_TIMEZONE)
     return czech_time.isoformat()
 
+def get_shift_from_czech_datetime(dt):
+    """
+    Determine which shift a datetime falls into based on Czech timezone
+    Shifts:
+    - Morning: 6:00-14:00 (6 AM to 2 PM)
+    - Evening: 14:00-22:00 (2 PM to 10 PM)
+    - Night: 22:00-6:00 (10 PM to 6 AM, crosses midnight)
+    
+    Args:
+        dt: datetime object (will be converted to Czech timezone if needed)
+    
+    Returns:
+        str: 'Morning', 'Evening', or 'Night'
+    """
+    if dt is None:
+        return 'Unknown'
+    
+    # Convert to Czech timezone
+    if dt.tzinfo is None:
+        dt = pytz.UTC.localize(dt)
+    czech_time = dt.astimezone(CZECH_TIMEZONE)
+    
+    hour = czech_time.hour
+    
+    if 6 <= hour < 14:
+        return 'Morning'
+    elif 14 <= hour < 22:
+        return 'Evening'
+    else:  # hour >= 22 or hour < 6
+        return 'Night'
+
 # Initialize scheduler
 scheduler = AsyncIOScheduler()
 
@@ -1037,6 +1068,8 @@ async def get_history(
         
         # Build WHERE clause with filters
         where_clauses = ["fulfilled_time >= DATEADD(day, -30, GETDATE())"]  # Only last 30 days
+        # Exclude TEST workcenter/deliver_to from history display
+        where_clauses.append("deliver_to != 'TEST'")
         params = []
         
         if serial_no:
@@ -1152,6 +1185,8 @@ async def get_history_stats(
             
             # Build WHERE clause
             where_clauses = [f"fulfilled_time >= DATEADD(day, -{days}, GETDATE())"]
+            # Exclude TEST workcenter/deliver_to from calculations
+            where_clauses.append("deliver_to != 'TEST'")
             params = []
             
             if part_no:
@@ -1160,13 +1195,13 @@ async def get_history_stats(
                 
             where_clause = " AND ".join(where_clauses)
             
-            # Overall statistics
+            # Overall statistics (exclude manual_delete from performance calculations)
             cursor.execute(f"""
                 SELECT 
-                    COUNT(*) as total_fulfilled,
-                    AVG(CAST(fulfillment_duration_minutes AS FLOAT)) as avg_fulfillment_minutes,
-                    MIN(fulfillment_duration_minutes) as min_fulfillment_minutes,
-                    MAX(fulfillment_duration_minutes) as max_fulfillment_minutes,
+                    COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) as total_fulfilled,
+                    AVG(CASE WHEN fulfillment_type != 'manual_delete' THEN CAST(fulfillment_duration_minutes AS FLOAT) END) as avg_fulfillment_minutes,
+                    MIN(CASE WHEN fulfillment_type != 'manual_delete' THEN fulfillment_duration_minutes END) as min_fulfillment_minutes,
+                    MAX(CASE WHEN fulfillment_type != 'manual_delete' THEN fulfillment_duration_minutes END) as max_fulfillment_minutes,
                     COUNT(CASE WHEN fulfillment_type = 'auto_cleanup' THEN 1 END) as auto_fulfilled,
                     COUNT(CASE WHEN fulfillment_type = 'manual_cleanup' THEN 1 END) as manual_cleanup,
                     COUNT(CASE WHEN fulfillment_type = 'manual_delete' THEN 1 END) as manual_delete
@@ -1175,37 +1210,39 @@ async def get_history_stats(
             """, params)
             overall_stats = cursor.fetchone()
             
-            # Statistics by part number
+            # Statistics by part number (exclude manual_delete from performance calculations)
             cursor.execute(f"""
                 SELECT 
                     part_no,
-                    COUNT(*) as fulfilled_count,
-                    AVG(CAST(fulfillment_duration_minutes AS FLOAT)) as avg_fulfillment_minutes,
-                    MIN(fulfillment_duration_minutes) as min_fulfillment_minutes,
-                    MAX(fulfillment_duration_minutes) as max_fulfillment_minutes
+                    COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) as fulfilled_count,
+                    AVG(CASE WHEN fulfillment_type != 'manual_delete' THEN CAST(fulfillment_duration_minutes AS FLOAT) END) as avg_fulfillment_minutes,
+                    MIN(CASE WHEN fulfillment_type != 'manual_delete' THEN fulfillment_duration_minutes END) as min_fulfillment_minutes,
+                    MAX(CASE WHEN fulfillment_type != 'manual_delete' THEN fulfillment_duration_minutes END) as max_fulfillment_minutes
                 FROM REQUESTS_HISTORY
                 WHERE {where_clause}
                 GROUP BY part_no
+                HAVING COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) > 0
                 ORDER BY fulfilled_count DESC, avg_fulfillment_minutes ASC
             """, params)
             part_stats = cursor.fetchall()
             
-            # Daily fulfillment trend (last 7 days for performance)
+            # Daily fulfillment trend (last 7 days for performance, exclude manual_delete)
             trend_days = min(days, 7)
             cursor.execute(f"""
                 SELECT 
                     CAST(fulfilled_time AS DATE) as fulfillment_date,
-                    COUNT(*) as fulfilled_count,
-                    AVG(CAST(fulfillment_duration_minutes AS FLOAT)) as avg_duration
+                    COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) as fulfilled_count,
+                    AVG(CASE WHEN fulfillment_type != 'manual_delete' THEN CAST(fulfillment_duration_minutes AS FLOAT) END) as avg_duration
                 FROM REQUESTS_HISTORY
-                WHERE fulfilled_time >= DATEADD(day, -{trend_days}, GETDATE())
-                {(" AND " + " AND ".join(where_clauses[1:])) if len(where_clauses) > 1 else ""}
+                WHERE fulfilled_time >= DATEADD(day, -{trend_days}, GETDATE()) AND deliver_to != 'TEST'
+                {(" AND " + " AND ".join(where_clauses[2:])) if len(where_clauses) > 2 else ""}
                 GROUP BY CAST(fulfilled_time AS DATE)
+                HAVING COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) > 0
                 ORDER BY fulfillment_date DESC
             """, params[1:] if part_no else [])
             daily_trend = cursor.fetchall()
             
-            # Performance categories (fast, medium, slow)
+            # Performance categories (fast, medium, slow, exclude manual_delete)
             cursor.execute(f"""
                 SELECT 
                     CASE 
@@ -1217,7 +1254,7 @@ async def get_history_stats(
                     COUNT(*) as count,
                     AVG(CAST(fulfillment_duration_minutes AS FLOAT)) as avg_minutes
                 FROM REQUESTS_HISTORY
-                WHERE {where_clause}
+                WHERE {where_clause} AND fulfillment_type != 'manual_delete'
                 GROUP BY 
                     CASE 
                         WHEN fulfillment_duration_minutes <= 60 THEN 'Fast (≤1 hour)'
@@ -1228,6 +1265,68 @@ async def get_history_stats(
                 ORDER BY avg_minutes ASC
             """, params)
             performance_categories = cursor.fetchall()
+            
+            # Get all history records for shift analysis (exclude manual_delete)
+            cursor.execute(f"""
+                SELECT fulfilled_time, fulfillment_duration_minutes, fulfillment_type
+                FROM REQUESTS_HISTORY
+                WHERE {where_clause} AND fulfillment_type != 'manual_delete'
+            """, params)
+            shift_raw_data = cursor.fetchall()
+            
+            # Calculate shift-based statistics
+            shift_data = {'Morning': [], 'Evening': [], 'Night': []}
+            
+            for row in shift_raw_data:
+                fulfilled_time, duration_minutes, fulfillment_type = row
+                shift = get_shift_from_czech_datetime(fulfilled_time)
+                if shift in shift_data:
+                    shift_data[shift].append({
+                        'duration': duration_minutes,
+                        'type': fulfillment_type
+                    })
+            
+            by_shift = []
+            for shift_name, records in shift_data.items():
+                if records:
+                    durations = [r['duration'] for r in records]
+                    auto_count = sum(1 for r in records if r['type'] == 'auto_cleanup')
+                    manual_cleanup_count = sum(1 for r in records if r['type'] == 'manual_cleanup')
+                    manual_delete_count = sum(1 for r in records if r['type'] == 'manual_delete')
+                    
+                    by_shift.append({
+                        'shift': shift_name,
+                        'time_range': 'Morning (6:00-14:00)' if shift_name == 'Morning' 
+                                     else 'Evening (14:00-22:00)' if shift_name == 'Evening' 
+                                     else 'Night (22:00-6:00)',
+                        'fulfilled_count': len(records),
+                        'avg_fulfillment_minutes': round(sum(durations) / len(durations), 2),
+                        'avg_fulfillment_hours': round((sum(durations) / len(durations)) / 60, 2),
+                        'min_fulfillment_minutes': min(durations),
+                        'max_fulfillment_minutes': max(durations),
+                        'auto_fulfilled': auto_count,
+                        'manual_cleanup': manual_cleanup_count,
+                        'manual_delete': manual_delete_count
+                    })
+                else:
+                    by_shift.append({
+                        'shift': shift_name,
+                        'time_range': 'Morning (6:00-14:00)' if shift_name == 'Morning' 
+                                     else 'Evening (14:00-22:00)' if shift_name == 'Evening' 
+                                     else 'Night (22:00-6:00)',
+                        'fulfilled_count': 0,
+                        'avg_fulfillment_minutes': 0,
+                        'avg_fulfillment_hours': 0,
+                        'min_fulfillment_minutes': 0,
+                        'max_fulfillment_minutes': 0,
+                        'auto_fulfilled': 0,
+                        'manual_cleanup': 0,
+                        'manual_delete': 0
+                    })
+            
+            # Sort by shift order: Morning, Evening, Night
+            shift_order = {'Morning': 0, 'Evening': 1, 'Night': 2}
+            by_shift.sort(key=lambda x: shift_order.get(x['shift'], 3))
             
             # Format results
             overall = {
@@ -1275,6 +1374,7 @@ async def get_history_stats(
                 'part_no_filter': part_no,
                 'overall': overall,
                 'by_part_number': by_part_number,
+                'by_shift': by_shift,
                 'daily_trends': daily_trends,
                 'performance_breakdown': performance_breakdown,
                 'generated_at': datetime.now().isoformat()
