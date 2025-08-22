@@ -15,22 +15,18 @@ body, html {
 .logo-fixed {
     position: fixed;
     top: 10px;
-    left: 10px;
+    right: 20px;
     width: 150px;
     height: auto;
     z-index: 1000;
 }
 
 .nav-button {
-    position: fixed;
-    top: 20px;
-    right: 20px;
     padding: 10px 20px;
     background-color: #007bff;
     color: white;
     text-decoration: none;
     border-radius: 5px;
-    z-index: 1000;
 }
 
 .nav-button:hover {

@@ -269,12 +269,14 @@ async function triggerManualCleanup() {
             }
         });
         
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
         const results = await response.json();
         console.log('✅ Cleanup results received:', results);
+        
+        // Check if the operation actually succeeded based on the response content
+        // rather than just HTTP status code
+        if (results.status === 'error') {
+            throw new Error(results.message || 'Cleanup operation failed');
+        }
         
         // Display results
         displayCleanupResults(results);
