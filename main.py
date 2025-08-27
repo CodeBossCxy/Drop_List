@@ -288,9 +288,23 @@ async def get_container_by_serial_no(serial_no: str) -> List[str]:
         }
     })
     response = requests.request("POST", url, headers=headers, data=payload)
-    print("-----response-----", response.json())
-    columns = response.json().get("tables")[0].get("columns", [])
-    rows = response.json().get("tables")[0].get("rows", [])
+    
+    try:
+        response_data = response.json()
+        print("-----response-----", response_data)
+    except (ValueError, json.JSONDecodeError) as e:
+        print(f"Failed to parse JSON response: {e}")
+        print(f"Response text: {response.text}")
+        print(f"Response status: {response.status_code}")
+        return []
+    
+    try:
+        columns = response_data.get("tables")[0].get("columns", [])
+        rows = response_data.get("tables")[0].get("rows", [])
+    except (IndexError, TypeError, KeyError) as e:
+        print(f"Failed to extract table data: {e}")
+        print(f"Response structure: {response_data}")
+        return []
     df = pd.DataFrame(rows, columns=columns)
     print("-----df-----", df)
     return df.to_dict(orient="records")
@@ -304,8 +318,22 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
         }
     })
     response = requests.request("POST", url, headers=headers, data=payload)
-    columns = response.json().get("tables")[0].get("columns", [])
-    rows = response.json().get("tables")[0].get("rows", [])
+    
+    try:
+        response_data = response.json()
+    except (ValueError, json.JSONDecodeError) as e:
+        print(f"Failed to parse JSON response: {e}")
+        print(f"Response text: {response.text}")
+        print(f"Response status: {response.status_code}")
+        return []
+    
+    try:
+        columns = response_data.get("tables")[0].get("columns", [])
+        rows = response_data.get("tables")[0].get("rows", [])
+    except (IndexError, TypeError, KeyError) as e:
+        print(f"Failed to extract table data: {e}")
+        print(f"Response structure: {response_data}")
+        return []
     df = pd.DataFrame(rows, columns=columns)
     df = df.sort_values(by=["Add_Date", "Serial_No"], ascending=[True, True])
     
@@ -340,9 +368,23 @@ async def get_prod_locations() -> List[str]:
         }
     })
     response = requests.request("POST", url, headers=headers, data=payload)
-    # print("[get_prod_locations] response:", response.json())
-    columns = response.json().get("tables")[0].get("columns", [])
-    rows = response.json().get("tables")[0].get("rows", [])
+    
+    try:
+        response_data = response.json()
+        # print("[get_prod_locations] response:", response_data)
+    except (ValueError, json.JSONDecodeError) as e:
+        print(f"Failed to parse JSON response: {e}")
+        print(f"Response text: {response.text}")
+        print(f"Response status: {response.status_code}")
+        return []
+    
+    try:
+        columns = response_data.get("tables")[0].get("columns", [])
+        rows = response_data.get("tables")[0].get("rows", [])
+    except (IndexError, TypeError, KeyError) as e:
+        print(f"Failed to extract table data: {e}")
+        print(f"Response structure: {response_data}")
+        return []
     df = pd.DataFrame(rows, columns=columns)
     print(df)
     return df['Location'].tolist()
@@ -730,10 +772,14 @@ async def index(request: Request):
 
 @app.post("/part/{part_no}", response_class=JSONResponse)
 async def get_containers(request: Request, part_no: str):
-    print("part_no", part_no)
-    containers = await get_containers_by_part_no(part_no)
-    # return JSONResponse(content={"dataframe": containers.to_dict(orient="records")})
-    return JSONResponse(content={"dataframe": jsonable_encoder(containers)})
+    try:
+        print("part_no", part_no)
+        containers = await get_containers_by_part_no(part_no)
+        # return JSONResponse(content={"dataframe": containers.to_dict(orient="records")})
+        return JSONResponse(content={"dataframe": jsonable_encoder(containers)})
+    except Exception as e:
+        print(f"Error in get_containers: {e}")
+        return JSONResponse(content={"dataframe": [], "error": str(e)}, status_code=500)
 
 @app.post("/part/{part_no}/{serial_no}", response_class=JSONResponse)
 async def request_serial_no(request: Request, part_no: str, serial_no: str):
@@ -780,11 +826,15 @@ async def request_serial_no(request: Request, part_no: str, serial_no: str):
 
 @app.post("/{serial_no}", response_class=JSONResponse)
 async def request_serial_no(request: Request, serial_no: str):
-    global req_id
-    print("serial_no", serial_no)
-    container = await get_container_by_serial_no(serial_no)
-    print("-----container-----", container)
-    return JSONResponse(content={"dataframe": jsonable_encoder(container)})
+    try:
+        global req_id
+        print("serial_no", serial_no)
+        container = await get_container_by_serial_no(serial_no)
+        print("-----container-----", container)
+        return JSONResponse(content={"dataframe": jsonable_encoder(container)})
+    except Exception as e:
+        print(f"Error in request_serial_no: {e}")
+        return JSONResponse(content={"dataframe": [], "error": str(e)}, status_code=500)
 
 
 @app.get("/requests", response_class=HTMLResponse)
@@ -884,7 +934,7 @@ async def get_all_requests():
         print(f"Error type: {type(e)}")
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(content=[], status_code=500)
 
 @app.delete("/api/requests/{serial_no}", response_class=JSONResponse)
 async def delete_request(serial_no: str):

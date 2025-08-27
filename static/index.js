@@ -35,7 +35,15 @@ async function fetchExistingRequests() {
         if (!response.ok) {
             throw new Error('Failed to fetch existing requests');
         }
-        const requests = await response.json();
+        const responseText = await response.text();
+        let requests;
+        try {
+            requests = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error('Failed to parse JSON response:', jsonError);
+            console.error('Response text:', responseText);
+            throw new Error('Invalid JSON response from server');
+        }
         const result = new Set(requests.map(req => req.serial_no));
         console.log("result", result);
         return result;
@@ -61,7 +69,15 @@ async function fetchContainerInfo(serialNo) {
         
         console.log('API response status:', response.status, response.statusText);
         
-        const data = await response.json();
+        const responseText = await response.text();
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error('Failed to parse JSON response:', jsonError);
+            console.error('Response text:', responseText);
+            throw new Error('Invalid JSON response from server');
+        }
         console.log('API response data:', data);
         
         // DETAILED DATA INSPECTION
@@ -118,7 +134,15 @@ async function fetchContainers(partNo) {
         
         console.log('API response status:', response.status, response.statusText);
         
-        const data = await response.json();
+        const responseText = await response.text();
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error('Failed to parse JSON response:', jsonError);
+            console.error('Response text:', responseText);
+            throw new Error('Invalid JSON response from server');
+        }
         console.log('API response data:', data);
         
         // DETAILED DATA INSPECTION
@@ -556,7 +580,15 @@ async function handleRequest(serialNo, partNo, button) {
             throw new Error(`Request failed: ${response.status} ${response.statusText}`);
         }
         
-        const responseData = await response.json();
+        const responseText = await response.text();
+        let responseData;
+        try {
+            responseData = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error('Failed to parse JSON response:', jsonError);
+            console.error('Response text:', responseText);
+            throw new Error('Invalid JSON response from server');
+        }
         console.log('- API success response:', responseData);
         
         // Optional: Show success message
@@ -678,8 +710,16 @@ async function getContainersByPartNo() {
                     "Content-Type": "application/json"
                 },
                 body: JSON.stringify({ "part_no": part_no_input.value }),
-            }).then(response => response.json())
-              .then(data => {
+            }).then(async response => {
+                const responseText = await response.text();
+                try {
+                    return JSON.parse(responseText);
+                } catch (jsonError) {
+                    console.error('Failed to parse JSON response:', jsonError);
+                    console.error('Response text:', responseText);
+                    throw new Error('Invalid JSON response from server');
+                }
+            }).then(data => {
                 console.log("--------------------------------");
                 console.log(data);
                 let table = '<table style="width: 100%;" display="block">';
@@ -753,8 +793,16 @@ async function getContainersByPartNo() {
                                 "Content-Type": "application/json"
                             },
                             body: JSON.stringify(container),
-                        }).then(response => response.json())
-                          .then(data => {
+                        }).then(async response => {
+                            const responseText = await response.text();
+                            try {
+                                return JSON.parse(responseText);
+                            } catch (jsonError) {
+                                console.error('Failed to parse JSON response:', jsonError);
+                                console.error('Response text:', responseText);
+                                throw new Error('Invalid JSON response from server');
+                            }
+                        }).then(data => {
                             console.log(data);
                             // Remove the row from the table
                             this.remove();
