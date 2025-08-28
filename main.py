@@ -3,7 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from typing import List
-import requests
+import httpx
 import os
 import json
 from datetime import datetime, timedelta, timezone
@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import pandas as pd
 import base64
+import aioodbc
 import pyodbc
 from dotenv import load_dotenv
 from decimal import Decimal
@@ -37,6 +38,34 @@ print("username", username)
 print("password", password)
 
 app = FastAPI()
+
+# Add CORS middleware to handle any cross-origin issues
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add middleware to ensure proper JSON responses
+@app.middleware("http")
+async def ensure_json_response(request, call_next):
+    try:
+        response = await call_next(request)
+        return response
+    except Exception as e:
+        print(f"[middleware] Unhandled exception: {e}")
+        import traceback
+        print(f"[middleware] Traceback: {traceback.format_exc()}")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error", "detail": str(e)}
+        )
+
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
@@ -98,12 +127,32 @@ scheduler = AsyncIOScheduler()
 @app.on_event("startup")
 async def startup_event():
     """Start the background scheduler when the application starts"""
+    logger.info("🚀 Starting application startup...")
+    
+    # Initialize database connection and create tables
+    try:
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            await cursor.execute("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES")
+            row = await cursor.fetchone()
+            table_count = row[0] if row else 0
+            logger.info(f"Connected successfully! Database has {table_count} tables.")
+        finally:
+            await release_db_connection(conn)
+        
+        # Create history table on startup
+        await create_history_table()
+        
+    except Exception as e:
+        logger.error(f"Database connection error during startup: {e}")
+    
     logger.info("🚀 Starting automated cleanup scheduler...")
     
-    # Add the cleanup job to run every 5 minutes
+    # Add the cleanup job to run every 10 minutes (reduced frequency for better performance)
     scheduler.add_job(
         func=automated_container_cleanup,
-        trigger=IntervalTrigger(minutes=5),  # Every 5 minutes
+        trigger=IntervalTrigger(minutes=10),  # Reduced from 5 to 10 minutes
         id='container_cleanup',
         name='Automated Container Cleanup',
         replace_existing=True,
@@ -123,23 +172,40 @@ async def startup_event():
     )
     
     scheduler.start()
-    logger.info("✅ Scheduler started successfully (container cleanup: 5min, history cleanup: daily)")
+    logger.info("✅ Scheduler started successfully (container cleanup: 10min, history cleanup: daily)")
     
-    # Run initial cleanup after 2 minutes (to allow app to fully start)
+    # Run initial cleanup after 5 minutes (increased delay to allow app to fully start)
     scheduler.add_job(
         func=automated_container_cleanup,
         trigger='date',
-        run_date=datetime.now() + timedelta(minutes=2),
+        run_date=datetime.now() + timedelta(minutes=5),
         id='initial_cleanup',
         name='Initial Container Cleanup'
     )
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Stop the scheduler when the application shuts down"""
-    logger.info("🛑 Shutting down scheduler...")
+    """Stop the scheduler and cleanup resources when the application shuts down"""
+    logger.info("🛑 Shutting down application...")
+    
+    # Shutdown scheduler
     scheduler.shutdown()
     logger.info("✅ Scheduler shut down successfully")
+    
+    # Close HTTP client
+    global http_client
+    if http_client:
+        await http_client.aclose()
+        logger.info("✅ HTTP client closed")
+    
+    # Close database connection pool
+    global connection_pool
+    if connection_pool:
+        connection_pool.close()
+        await connection_pool.wait_closed()
+        logger.info("✅ Database connection pool closed")
+    
+    logger.info("✅ Application shutdown complete")
 
 
 # global counter
@@ -160,6 +226,33 @@ missing_vars = [var for var in required_vars if not os.getenv(var)]
 if missing_vars:
     raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
+# Connection pool for async database operations
+connection_pool = None
+
+async def get_db_connection():
+    """Get an async database connection from the pool"""
+    global connection_pool
+    if connection_pool is None:
+        connection_string = f'''
+            DRIVER={{ODBC Driver 18 for SQL Server}};
+            SERVER=tcp:{server}.database.windows.net,1433;
+            DATABASE={database};
+            Uid={username};
+            Pwd={password};
+            Encrypt=yes;
+            TrustServerCertificate=no;
+            Connection Timeout=60;
+        '''
+        connection_pool = await aioodbc.create_pool(dsn=connection_string, minsize=5, maxsize=20)
+    
+    return await connection_pool.acquire()
+
+async def release_db_connection(conn):
+    """Release a database connection back to the pool"""
+    global connection_pool
+    if connection_pool and conn:
+        await connection_pool.release(conn)
+
 class AzureSQLConnection:
     def __init__(self):
         self.connection_string = f'''
@@ -170,7 +263,7 @@ class AzureSQLConnection:
             Pwd={password};
             Encrypt=yes;
             TrustServerCertificate=no;
-            Connection Timeout=30;
+            Connection Timeout=60;
         '''
         self.conn = None
     
@@ -184,7 +277,7 @@ class AzureSQLConnection:
 
 # --- Database Setup Functions ---
 
-def create_history_table():
+async def create_history_table():
     """Create REQUESTS_HISTORY table if it doesn't exist"""
     create_table_sql = """
     IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'REQUESTS_HISTORY')
@@ -220,29 +313,29 @@ def create_history_table():
     """
     
     try:
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(create_table_sql)
-            conn.commit()
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            await cursor.execute(create_table_sql)
+            await conn.commit()
             logger.info("✅ REQUESTS_HISTORY table setup completed")
+        finally:
+            await release_db_connection(conn)
     except Exception as e:
         logger.error(f"❌ Error creating REQUESTS_HISTORY table: {e}")
 
-# Usage example with context manager and setup
-try:
-    with AzureSQLConnection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES")
-        table_count = cursor.fetchone()[0]
-        print(f"Connected successfully! Database has {table_count} tables.")
-        
-    # Create history table on startup
-    create_history_table()
-        
-except pyodbc.Error as e:
-    print(f"Database error: {e}")
-except Exception as e:
-    print(f"General error: {e}")
+# Global HTTP client for async requests
+http_client = None
+
+async def get_http_client():
+    """Get the global HTTP client instance"""
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5)
+        )
+    return http_client
 
 
 # --- Config ---
@@ -282,20 +375,34 @@ class SerialNoRequest(BaseModel):
 async def get_container_by_serial_no(serial_no: str) -> List[str]:
     container_by_serial_no_id = 4619
     url = f"{ERP_API_BASE}{container_by_serial_no_id}/execute"
-    payload = json.dumps({
+    payload = {
         "inputs": {
             "Serial_No": serial_no
         }
-    })
-    response = requests.request("POST", url, headers=headers, data=payload)
+    }
     
     try:
+        client = await get_http_client()
+        response = await client.post(url, headers=headers, json=payload)
+        
+        print(f"[get_container_by_serial_no] Response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"[get_container_by_serial_no] HTTP error: {response.status_code}")
+            return []
+            
         response_data = response.json()
         print("-----response-----", response_data)
+        
+    except httpx.TimeoutException:
+        print(f"[get_container_by_serial_no] Request timeout")
+        return []
+    except httpx.RequestError as e:
+        print(f"[get_container_by_serial_no] Request error: {e}")
+        return []
     except (ValueError, json.JSONDecodeError) as e:
         print(f"Failed to parse JSON response: {e}")
         print(f"Response text: {response.text}")
-        print(f"Response status: {response.status_code}")
         return []
     
     try:
@@ -305,47 +412,71 @@ async def get_container_by_serial_no(serial_no: str) -> List[str]:
         print(f"Failed to extract table data: {e}")
         print(f"Response structure: {response_data}")
         return []
+    
     df = pd.DataFrame(rows, columns=columns)
     print("-----df-----", df)
     return df.to_dict(orient="records")
 
 async def get_containers_by_part_no(part_no: str) -> List[str]:
+    print(f"[get_containers_by_part_no] Starting search for part_no: {part_no}")
     containers_by_part_no_id = 8566
     url = f"{ERP_API_BASE}{containers_by_part_no_id}/execute"
-    payload = json.dumps({
+    payload = {
         "inputs": {
             "Part_No": part_no
         }
-    })
-    response = requests.request("POST", url, headers=headers, data=payload)
+    }
+    print(f"[get_containers_by_part_no] Making request to: {url}")
+    
+    try:
+        client = await get_http_client()
+        response = await client.post(url, headers=headers, json=payload)
+        print(f"[get_containers_by_part_no] Response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"[get_containers_by_part_no] HTTP error: {response.status_code}")
+            return []
+            
+    except httpx.TimeoutException:
+        print(f"[get_containers_by_part_no] Request timeout")
+        return []
+    except httpx.RequestError as e:
+        print(f"[get_containers_by_part_no] Request error: {e}")
+        return []
     
     try:
         response_data = response.json()
+        print(f"[get_containers_by_part_no] Successfully parsed JSON response")
     except (ValueError, json.JSONDecodeError) as e:
-        print(f"Failed to parse JSON response: {e}")
-        print(f"Response text: {response.text}")
-        print(f"Response status: {response.status_code}")
+        print(f"[get_containers_by_part_no] Failed to parse JSON response: {e}")
+        print(f"[get_containers_by_part_no] Response text: {response.text}")
         return []
     
     try:
         columns = response_data.get("tables")[0].get("columns", [])
         rows = response_data.get("tables")[0].get("rows", [])
+        print(f"[get_containers_by_part_no] Extracted {len(rows)} rows with {len(columns)} columns")
     except (IndexError, TypeError, KeyError) as e:
-        print(f"Failed to extract table data: {e}")
-        print(f"Response structure: {response_data}")
+        print(f"[get_containers_by_part_no] Failed to extract table data: {e}")
+        print(f"[get_containers_by_part_no] Response structure: {response_data}")
         return []
+    
     df = pd.DataFrame(rows, columns=columns)
     df = df.sort_values(by=["Add_Date", "Serial_No"], ascending=[True, True])
     
     # Get existing serial numbers from database
     try:
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT serial_no FROM REQUESTS")
-            existing_serials = {row[0] for row in cursor.fetchall()}
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            await cursor.execute("SELECT serial_no FROM REQUESTS")
+            rows = await cursor.fetchall()
+            existing_serials = {row[0] for row in rows}
             
             # Add isRequested column instead of filtering
             df['isRequested'] = df['Serial_No'].isin(existing_serials)
+        finally:
+            await release_db_connection(conn)
             
     except Exception as e:
         print(f"Error checking existing containers: {e}")
@@ -362,20 +493,32 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
 async def get_prod_locations() -> List[str]:
     prod_locations_id = 18120
     url = f"{ERP_API_BASE}{prod_locations_id}/execute"
-    payload = json.dumps({
+    payload = {
         "inputs": {
             "Location_Type": "Production Storage_IN"
         }
-    })
-    response = requests.request("POST", url, headers=headers, data=payload)
+    }
     
     try:
+        client = await get_http_client()
+        response = await client.post(url, headers=headers, json=payload)
+        
+        if response.status_code != 200:
+            print(f"[get_prod_locations] HTTP error: {response.status_code}")
+            return []
+            
         response_data = response.json()
         # print("[get_prod_locations] response:", response_data)
+        
+    except httpx.TimeoutException:
+        print(f"[get_prod_locations] Request timeout")
+        return []
+    except httpx.RequestError as e:
+        print(f"[get_prod_locations] Request error: {e}")
+        return []
     except (ValueError, json.JSONDecodeError) as e:
         print(f"Failed to parse JSON response: {e}")
         print(f"Response text: {response.text}")
-        print(f"Response status: {response.status_code}")
         return []
     
     try:
@@ -385,13 +528,14 @@ async def get_prod_locations() -> List[str]:
         print(f"Failed to extract table data: {e}")
         print(f"Response structure: {response_data}")
         return []
+    
     df = pd.DataFrame(rows, columns=columns)
     print(df)
     return df['Location'].tolist()
 
 # --- History Logging Functions ---
 
-def log_request_to_history(req_id: int, serial_no: str, part_no: str, revision: str, quantity: float, 
+async def log_request_to_history(req_id: int, serial_no: str, part_no: str, revision: str, quantity: float, 
                           location: str, deliver_to: str, req_time: datetime, 
                           current_location: str, fulfillment_type: str = 'auto_cleanup'):
     """
@@ -415,16 +559,19 @@ def log_request_to_history(req_id: int, serial_no: str, part_no: str, revision: 
         # Log timing info for debugging
         logger.info(f"History logging: req_time={req_time_utc}, fulfilled_time={fulfilled_time}, duration={duration_minutes}min")
         
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            await cursor.execute("""
                 INSERT INTO REQUESTS_HISTORY 
                 (req_id, serial_no, part_no, revision, quantity, location, deliver_to, 
                  req_time, fulfilled_time, fulfillment_duration_minutes, fulfillment_type, current_location)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (req_id, serial_no, part_no, revision, quantity, location, deliver_to,
                   req_time, fulfilled_time, duration_minutes, fulfillment_type, current_location))
-            conn.commit()
+            await conn.commit()
+        finally:
+            await release_db_connection(conn)
             
         logger.info(f"📝 Logged request {serial_no} to history (fulfilled in {duration_minutes} minutes)")
         return True
@@ -512,20 +659,21 @@ async def automated_container_cleanup():
             else:
                 logger.warning(f"⚠️ Could not determine current location for container: {serial_no}")
             
-            # Small delay to avoid overwhelming the ERP API
-            await asyncio.sleep(1)
+            # Small delay to avoid overwhelming the ERP API (reduced for better performance)
+            await asyncio.sleep(0.5)
         
         # Remove containers that are now in production locations
         if containers_to_remove:
             logger.info(f"🗑️ Removing {len(containers_to_remove)} containers that moved to production...")
             
-            with AzureSQLConnection() as conn:
-                cursor = conn.cursor()
+            conn = await get_db_connection()
+            try:
+                cursor = await conn.cursor()
                 
                 for container in containers_to_remove:
                     try:
                         # Log to history before deleting
-                        history_logged = log_request_to_history(
+                        history_logged = await log_request_to_history(
                             req_id=container['req_id'],
                             serial_no=container['serial_no'],
                             part_no=container['part_no'],
@@ -540,7 +688,7 @@ async def automated_container_cleanup():
                         
                         if history_logged:
                             # Only delete from REQUESTS if history logging succeeded
-                            cursor.execute("DELETE FROM REQUESTS WHERE req_id = ?", (container['req_id'],))
+                            await cursor.execute("DELETE FROM REQUESTS WHERE req_id = ?", (container['req_id'],))
                             logger.info(f"✅ Removed container {container['serial_no']} from requests (moved to {container['current_location']})")
                         else:
                             logger.warning(f"⚠️ Skipped deleting container {container['serial_no']} due to history logging failure")
@@ -548,8 +696,10 @@ async def automated_container_cleanup():
                     except Exception as e:
                         logger.error(f"❌ Error removing container {container['serial_no']}: {e}")
                 
-                conn.commit()
+                await conn.commit()
                 logger.info(f"✅ Successfully processed {len(containers_to_remove)} container removals")
+            finally:
+                await release_db_connection(conn)
         else:
             logger.info("✅ No containers need to be removed at this time")
         
@@ -710,33 +860,38 @@ async def automated_history_cleanup():
     try:
         logger.info("🧹 Starting automated history cleanup...")
         
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
             
             # Count records that will be deleted
-            cursor.execute("""
+            await cursor.execute("""
                 SELECT COUNT(*) 
                 FROM REQUESTS_HISTORY 
                 WHERE fulfilled_time < DATEADD(day, -30, GETDATE())
             """)
-            records_to_delete = cursor.fetchone()[0]
+            row = await cursor.fetchone()
+            records_to_delete = row[0] if row else 0
             
             if records_to_delete > 0:
                 # Delete records older than 30 days
-                cursor.execute("""
+                await cursor.execute("""
                     DELETE FROM REQUESTS_HISTORY 
                     WHERE fulfilled_time < DATEADD(day, -30, GETDATE())
                 """)
-                conn.commit()
+                await conn.commit()
                 
                 logger.info(f"✅ Cleaned up {records_to_delete} old history records (>30 days)")
             else:
                 logger.info("✅ No old history records to clean up")
                 
-        # Get current statistics after cleanup
-        cursor.execute("SELECT COUNT(*) FROM REQUESTS_HISTORY")
-        remaining_records = cursor.fetchone()[0]
-        logger.info(f"📊 History table now contains {remaining_records} records")
+            # Get current statistics after cleanup
+            await cursor.execute("SELECT COUNT(*) FROM REQUESTS_HISTORY")
+            row = await cursor.fetchone()
+            remaining_records = row[0] if row else 0
+            logger.info(f"📊 History table now contains {remaining_records} records")
+        finally:
+            await release_db_connection(conn)
         
     except Exception as e:
         logger.error(f"❌ Error in automated history cleanup: {e}")
@@ -773,13 +928,19 @@ async def index(request: Request):
 @app.post("/part/{part_no}", response_class=JSONResponse)
 async def get_containers(request: Request, part_no: str):
     try:
-        print("part_no", part_no)
+        print(f"[get_containers] Processing part_no: {part_no}")
         containers = await get_containers_by_part_no(part_no)
-        # return JSONResponse(content={"dataframe": containers.to_dict(orient="records")})
-        return JSONResponse(content={"dataframe": jsonable_encoder(containers)})
+        print(f"[get_containers] Found {len(containers)} containers")
+        result = {"dataframe": jsonable_encoder(containers)}
+        print(f"[get_containers] Returning successful response")
+        return JSONResponse(content=result)
     except Exception as e:
-        print(f"Error in get_containers: {e}")
-        return JSONResponse(content={"dataframe": [], "error": str(e)}, status_code=500)
+        print(f"[get_containers] ERROR: {str(e)}")
+        import traceback
+        print(f"[get_containers] TRACEBACK: {traceback.format_exc()}")
+        error_response = {"dataframe": [], "error": str(e)}
+        print(f"[get_containers] Returning error response: {error_response}")
+        return JSONResponse(content=error_response, status_code=500)
 
 @app.post("/part/{part_no}/{serial_no}", response_class=JSONResponse)
 async def request_serial_no(request: Request, part_no: str, serial_no: str):
@@ -791,32 +952,35 @@ async def request_serial_no(request: Request, part_no: str, serial_no: str):
     print("data", data)
 
     try:
-        with AzureSQLConnection() as conn:
+        # Parse the req_time from ISO string and ensure it's stored consistently
+        req_time_str = data['req_time']
+        try:
+            # Parse ISO string to datetime object
+            req_time = datetime.fromisoformat(req_time_str.replace('Z', '+00:00'))
+            # Convert to UTC if it has timezone info, otherwise assume it's already UTC
+            if req_time.tzinfo is not None:
+                req_time_utc = req_time.astimezone(pytz.UTC).replace(tzinfo=None)
+            else:
+                req_time_utc = req_time
+        except:
+            # Fallback to current UTC time if parsing fails
+            req_time_utc = datetime.utcnow()
             
-            # Parse the req_time from ISO string and ensure it's stored consistently
-            req_time_str = data['req_time']
-            try:
-                # Parse ISO string to datetime object
-                req_time = datetime.fromisoformat(req_time_str.replace('Z', '+00:00'))
-                # Convert to UTC if it has timezone info, otherwise assume it's already UTC
-                if req_time.tzinfo is not None:
-                    req_time_utc = req_time.astimezone(pytz.UTC).replace(tzinfo=None)
-                else:
-                    req_time_utc = req_time
-            except:
-                # Fallback to current UTC time if parsing fails
-                req_time_utc = datetime.utcnow()
-                
-            print(f"Original req_time: {req_time_str}, Stored as UTC: {req_time_utc}")
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (req_id, serial_no, part_no, data['revision'], data['quantity'], data['location'], data['workcenter'], req_time_utc))
-            conn.commit()
+        print(f"Original req_time: {req_time_str}, Stored as UTC: {req_time_utc}")
+        
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            await cursor.execute("INSERT INTO REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (req_id, serial_no, part_no, data['revision'], data['quantity'], data['location'], data['workcenter'], req_time_utc))
+            await conn.commit()
 
             if cursor.rowcount == 1:
                 print("Request inserted successfully")
                 req_id += 1
             else:
                 print("Request insertion failed")
+        finally:
+            await release_db_connection(conn)
 
     except Exception as e:
         print(f"Error inserting request: {e}")
@@ -899,11 +1063,12 @@ async def get_barcode(location: str):
 async def get_all_requests():
     try:
         print("Attempting to connect to database...")
-        with AzureSQLConnection() as conn:
+        conn = await get_db_connection()
+        try:
             print("Connected to database successfully")
-            cursor = conn.cursor()
+            cursor = await conn.cursor()
             print("Executing SQL query...")
-            cursor.execute("""
+            await cursor.execute("""
                 SELECT *
                 FROM REQUESTS 
                 ORDER BY req_time DESC
@@ -912,7 +1077,7 @@ async def get_all_requests():
             columns = [column[0] for column in cursor.description]
             print(f"Columns found: {columns}")
             requests = []
-            rows = cursor.fetchall()
+            rows = await cursor.fetchall()
             print(f"Number of rows fetched: {len(rows)}")
             
             for row in rows:
@@ -929,6 +1094,8 @@ async def get_all_requests():
             
             print("Successfully processed all rows")
             return JSONResponse(content=requests)
+        finally:
+            await release_db_connection(conn)
     except Exception as e:
         print(f"Error fetching requests: {str(e)}")
         print(f"Error type: {type(e)}")
@@ -939,16 +1106,17 @@ async def get_all_requests():
 @app.delete("/api/requests/{serial_no}", response_class=JSONResponse)
 async def delete_request(serial_no: str):
     try:
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
             
             # First, get the request data before deleting for history logging
-            cursor.execute("""
+            await cursor.execute("""
                 SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time 
                 FROM REQUESTS 
                 WHERE serial_no = ?
             """, (serial_no,))
-            request_data = cursor.fetchone()
+            request_data = await cursor.fetchone()
             
             if not request_data:
                 raise HTTPException(status_code=404, detail="Request not found")
@@ -957,7 +1125,7 @@ async def delete_request(serial_no: str):
             req_id, serial_no_db, part_no, revision, quantity, location, deliver_to, req_time = request_data
             
             # Log to history before deleting (manual delete - no current_location since we don't know where it went)
-            history_logged = log_request_to_history(
+            history_logged = await log_request_to_history(
                 req_id=req_id,
                 serial_no=serial_no_db,
                 part_no=part_no,
@@ -974,11 +1142,13 @@ async def delete_request(serial_no: str):
                 logger.warning(f"⚠️ Failed to log request {serial_no} to history, but proceeding with deletion")
             
             # Delete from REQUESTS table
-            cursor.execute("DELETE FROM REQUESTS WHERE serial_no = ?", (serial_no,))
-            conn.commit()
+            await cursor.execute("DELETE FROM REQUESTS WHERE serial_no = ?", (serial_no,))
+            await conn.commit()
             
             logger.info(f"🗑️ Manual delete: Request {serial_no} removed by user")
             return JSONResponse(content={"message": "Request deleted successfully"})
+        finally:
+            await release_db_connection(conn)
             
     except HTTPException as he:
         raise he
@@ -1045,10 +1215,14 @@ async def get_cleanup_status():
             status_info['next_run_time'] = cleanup_job.next_run_time.isoformat() if cleanup_job.next_run_time else None
         
         # Get current database statistics
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM REQUESTS")
-            active_requests_count = cursor.fetchone()[0]
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            await cursor.execute("SELECT COUNT(*) FROM REQUESTS")
+            row = await cursor.fetchone()
+            active_requests_count = row[0] if row else 0
+        finally:
+            await release_db_connection(conn)
             
         status_info['active_requests_count'] = active_requests_count
         
@@ -1070,15 +1244,18 @@ async def get_cleanup_logs():
         
         prod_locations = await get_prod_locations()
         
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            await cursor.execute("""
                 SELECT COUNT(*) as total_requests, 
                        MIN(req_time) as oldest_request,
                        MAX(req_time) as newest_request
                 FROM REQUESTS
             """)
-            stats = cursor.fetchone()
+            stats = await cursor.fetchone()
+        finally:
+            await release_db_connection(conn)
         
         return JSONResponse(content={
             'production_locations': prod_locations,
@@ -1152,13 +1329,15 @@ async def get_history(
         
         where_clause = " AND ".join(where_clauses)
         
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
             
             # Get total count for pagination info
             count_sql = f"SELECT COUNT(*) FROM REQUESTS_HISTORY WHERE {where_clause}"
-            cursor.execute(count_sql, params)
-            total_count = cursor.fetchone()[0]
+            await cursor.execute(count_sql, params)
+            row = await cursor.fetchone()
+            total_count = row[0] if row else 0
             
             # Get paginated results
             data_sql = f"""
@@ -1170,12 +1349,13 @@ async def get_history(
                 ORDER BY fulfilled_time DESC
                 OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
             """
-            cursor.execute(data_sql, params + [offset, limit])
+            await cursor.execute(data_sql, params + [offset, limit])
             
             columns = [column[0] for column in cursor.description]
             history_records = []
             
-            for row in cursor.fetchall():
+            rows = await cursor.fetchall()
+            for row in rows:
                 record = {}
                 for i, value in enumerate(row):
                     if isinstance(value, datetime):
@@ -1189,6 +1369,8 @@ async def get_history(
                     else:
                         record[columns[i]] = value
                 history_records.append(record)
+        finally:
+            await release_db_connection(conn)
             
             # Calculate pagination info
             total_pages = (total_count + limit - 1) // limit
@@ -1230,8 +1412,9 @@ async def get_history_stats(
         if days < 1 or days > 365:  # Max 1 year
             days = 30
             
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
             
             # Build WHERE clause
             where_clauses = [f"fulfilled_time >= DATEADD(day, -{days}, GETDATE())"]
@@ -1246,7 +1429,7 @@ async def get_history_stats(
             where_clause = " AND ".join(where_clauses)
             
             # Overall statistics (exclude manual_delete from performance calculations)
-            cursor.execute(f"""
+            await cursor.execute(f"""
                 SELECT 
                     COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) as total_fulfilled,
                     AVG(CASE WHEN fulfillment_type != 'manual_delete' THEN CAST(fulfillment_duration_minutes AS FLOAT) END) as avg_fulfillment_minutes,
@@ -1258,10 +1441,10 @@ async def get_history_stats(
                 FROM REQUESTS_HISTORY
                 WHERE {where_clause}
             """, params)
-            overall_stats = cursor.fetchone()
+            overall_stats = await cursor.fetchone()
             
             # Statistics by part number (exclude manual_delete from performance calculations)
-            cursor.execute(f"""
+            await cursor.execute(f"""
                 SELECT 
                     part_no,
                     COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) as fulfilled_count,
@@ -1274,11 +1457,11 @@ async def get_history_stats(
                 HAVING COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) > 0
                 ORDER BY fulfilled_count DESC, avg_fulfillment_minutes ASC
             """, params)
-            part_stats = cursor.fetchall()
+            part_stats = await cursor.fetchall()
             
             # Daily fulfillment trend (last 7 days for performance, exclude manual_delete)
             trend_days = min(days, 7)
-            cursor.execute(f"""
+            await cursor.execute(f"""
                 SELECT 
                     CAST(fulfilled_time AS DATE) as fulfillment_date,
                     COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) as fulfilled_count,
@@ -1290,10 +1473,10 @@ async def get_history_stats(
                 HAVING COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) > 0
                 ORDER BY fulfillment_date DESC
             """, params[1:] if part_no else [])
-            daily_trend = cursor.fetchall()
+            daily_trend = await cursor.fetchall()
             
             # Performance categories (fast, medium, slow, exclude manual_delete)
-            cursor.execute(f"""
+            await cursor.execute(f"""
                 SELECT 
                     CASE 
                         WHEN fulfillment_duration_minutes <= 60 THEN 'Fast (≤1 hour)'
@@ -1314,15 +1497,15 @@ async def get_history_stats(
                     END
                 ORDER BY avg_minutes ASC
             """, params)
-            performance_categories = cursor.fetchall()
+            performance_categories = await cursor.fetchall()
             
             # Get all history records for shift analysis (exclude manual_delete)
-            cursor.execute(f"""
+            await cursor.execute(f"""
                 SELECT fulfilled_time, fulfillment_duration_minutes, fulfillment_type
                 FROM REQUESTS_HISTORY
                 WHERE {where_clause} AND fulfillment_type != 'manual_delete'
             """, params)
-            shift_raw_data = cursor.fetchall()
+            shift_raw_data = await cursor.fetchall()
             
             # Calculate shift-based statistics
             shift_data = {'Morning': [], 'Evening': [], 'Night': []}
@@ -1429,6 +1612,8 @@ async def get_history_stats(
                 'performance_breakdown': performance_breakdown,
                 'generated_at': datetime.now().isoformat()
             })
+        finally:
+            await release_db_connection(conn)
             
     except Exception as e:
         logger.error(f"Error getting history stats: {e}")
@@ -1441,12 +1626,14 @@ async def clear_all_history():
     This is a destructive operation and should be used with caution
     """
     try:
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
             
             # Count records before deletion
-            cursor.execute("SELECT COUNT(*) FROM REQUESTS_HISTORY")
-            count_before = cursor.fetchone()[0]
+            await cursor.execute("SELECT COUNT(*) FROM REQUESTS_HISTORY")
+            row = await cursor.fetchone()
+            count_before = row[0] if row else 0
             
             if count_before == 0:
                 return JSONResponse(content={
@@ -1456,11 +1643,13 @@ async def clear_all_history():
                 })
             
             # Delete all records
-            cursor.execute("DELETE FROM REQUESTS_HISTORY")
+            await cursor.execute("DELETE FROM REQUESTS_HISTORY")
             deleted_count = cursor.rowcount
-            conn.commit()
+            await conn.commit()
             
             logger.info(f"🗑️ Cleared all history: {deleted_count} records deleted")
+        finally:
+            await release_db_connection(conn)
             
             return JSONResponse(content={
                 'status': 'success',

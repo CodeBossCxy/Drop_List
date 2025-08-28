@@ -2,11 +2,12 @@ fastapi
 uvicorn[standard]
 gunicorn
 python-dotenv
-requests
+httpx              # async HTTP client to replace requests
 aiofiles           # if you serve static files or need async file I/O
 jinja2             # if you use templates
 sqlalchemy         # if you use ORM
 databases          # async db helper
+aioodbc            # async ODBC driver for SQL Server
 pandas
 psycopg2-binary    # PostgreSQL driver
 pyodbc
