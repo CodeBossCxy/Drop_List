@@ -32,10 +32,7 @@ database = os.getenv('AZURE_SQL_DATABASE')
 username = os.getenv('AZURE_SQL_USERNAME')
 password = os.getenv('AZURE_SQL_PASSWORD')
 
-print("server", server)
-print("database", database)
-print("username", username)
-print("password", password)
+# Database connection details loaded from environment
 
 app = FastAPI()
 
@@ -70,7 +67,14 @@ templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        logging.FileHandler('app.log')  # File output
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Define Czech timezone
@@ -149,10 +153,10 @@ async def startup_event():
     
     logger.info("🚀 Starting automated cleanup scheduler...")
     
-    # Add the cleanup job to run every 10 minutes (reduced frequency for better performance)
+    # Add the cleanup job to run every minute for faster response
     scheduler.add_job(
         func=automated_container_cleanup,
-        trigger=IntervalTrigger(minutes=10),  # Reduced from 5 to 10 minutes
+        trigger=IntervalTrigger(minutes=1),  # Every minute for faster cleanup
         id='container_cleanup',
         name='Automated Container Cleanup',
         replace_existing=True,
@@ -172,7 +176,7 @@ async def startup_event():
     )
     
     scheduler.start()
-    logger.info("✅ Scheduler started successfully (container cleanup: 10min, history cleanup: daily)")
+    logger.info("✅ Scheduler started successfully (container cleanup: 1min, history cleanup: daily)")
     
     # Run initial cleanup after 5 minutes (increased delay to allow app to fully start)
     scheduler.add_job(
@@ -210,6 +214,28 @@ async def shutdown_event():
 
 # global counter
 req_id = 0
+
+# Notification function for cleanup results
+async def send_cleanup_notification(notification_data):
+    """Send cleanup notifications to all connected WebSocket clients"""
+    if active_connections:
+        message = json.dumps(notification_data)
+        disconnected_connections = []
+        
+        for connection in active_connections:
+            try:
+                await connection.send_text(message)
+            except Exception as e:
+                # Connection is dead, mark for removal
+                disconnected_connections.append(connection)
+                logger.warning(f"Removing dead WebSocket connection: {e}")
+        
+        # Remove dead connections
+        for dead_conn in disconnected_connections:
+            try:
+                active_connections.remove(dead_conn)
+            except ValueError:
+                pass  # Already removed
 
 # your existing routes...
 
@@ -349,7 +375,7 @@ bytes = credentials.encode('utf-8')
 encoded_credentials = base64.b64encode(bytes).decode('utf-8')
 
 authorization_header = f"Basic {encoded_credentials}"
-print(authorization_header)
+# Authorization header configured for ERP API
 
 
 headers = {
@@ -491,6 +517,7 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
     return df.to_dict(orient="records")
 
 async def get_prod_locations() -> List[str]:
+    """Get production locations from ERP API"""
     prod_locations_id = 18120
     url = f"{ERP_API_BASE}{prod_locations_id}/execute"
     payload = {
@@ -504,34 +531,40 @@ async def get_prod_locations() -> List[str]:
         response = await client.post(url, headers=headers, json=payload)
         
         if response.status_code != 200:
-            print(f"[get_prod_locations] HTTP error: {response.status_code}")
+            logger.error(f"❌ Production locations HTTP error: {response.status_code}")
             return []
             
         response_data = response.json()
-        # print("[get_prod_locations] response:", response_data)
         
-    except httpx.TimeoutException:
-        print(f"[get_prod_locations] Request timeout")
+    except httpx.TimeoutException as e:
+        logger.error(f"❌ Production locations timeout: {e}")
         return []
     except httpx.RequestError as e:
-        print(f"[get_prod_locations] Request error: {e}")
+        logger.error(f"❌ Production locations request error: {e}")
         return []
     except (ValueError, json.JSONDecodeError) as e:
-        print(f"Failed to parse JSON response: {e}")
-        print(f"Response text: {response.text}")
+        logger.error(f"❌ Production locations JSON error: {e}")
         return []
     
     try:
-        columns = response_data.get("tables")[0].get("columns", [])
-        rows = response_data.get("tables")[0].get("rows", [])
-    except (IndexError, TypeError, KeyError) as e:
-        print(f"Failed to extract table data: {e}")
-        print(f"Response structure: {response_data}")
+        tables = response_data.get("tables", [])
+        if not tables:
+            logger.error(f"❌ No tables in production locations response")
+            return []
+            
+        columns = tables[0].get("columns", [])
+        rows = tables[0].get("rows", [])
+        
+        df = pd.DataFrame(rows, columns=columns)
+        locations = df['Location'].tolist()
+        
+        logger.info(f"🏭 Found {len(locations)} production locations")
+        
+        return locations
+        
+    except Exception as e:
+        logger.error(f"❌ Production locations processing error: {e}")
         return []
-    
-    df = pd.DataFrame(rows, columns=columns)
-    print(df)
-    return df['Location'].tolist()
 
 # --- History Logging Functions ---
 
@@ -588,7 +621,6 @@ async def check_container_current_location(serial_no: str) -> Optional[str]:
     Returns the current location or None if not found
     """
     try:
-        logger.info(f"🔍 Checking current location for container: {serial_no}")
         container_data = await get_container_by_serial_no(serial_no)
         
         if container_data and len(container_data) > 0:
@@ -605,20 +637,19 @@ async def check_container_current_location(serial_no: str) -> Optional[str]:
 
 async def automated_container_cleanup():
     """
-    Main automated cleanup function that runs every 5 minutes
+    Main automated cleanup function that runs every minute
     Checks if requested containers have moved to production locations and removes them
     """
     try:
-        logger.info("🧹 Starting automated container cleanup...")
+        logger.info(f"🧹 Starting automated container cleanup...")
         
-        # Get all production locations
-        logger.info("📋 Fetching production locations...")
+        # Get production locations
         prod_locations = await get_prod_locations()
-        logger.info(f"✅ Found {len(prod_locations)} production locations: {prod_locations}")
-        
+        if not prod_locations:
+            logger.error(f"🚨 CRITICAL: No production locations found! Aborting cleanup.")
+            return
+                
         # Get all active requests from database
-        logger.info("🗄️ Fetching active requests from database...")
-        
         with AzureSQLConnection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -633,16 +664,29 @@ async def automated_container_cleanup():
         containers_to_remove = []
         
         # Check each active request
-        for req_id, serial_no, part_no, revision, quantity, stored_location, deliver_to, req_time in active_requests:
-            logger.info(f"🔍 Checking container: {serial_no} (stored location: {stored_location})")
-            
+        for req_id, serial_no, part_no, revision, quantity, stored_location, deliver_to, req_time in active_requests:            
             # Get current location from ERP
             current_location = await check_container_current_location(serial_no)
             
             if current_location:
+                is_in_prod = current_location in prod_locations
+                
+                # CRITICAL DEBUG: Log the exact decision logic for suspicious containers
+                if serial_no == '3942299' or req_id == 3942299:
+                    logger.error(f"🔍 CRITICAL DEBUG for container {serial_no} (req_id: {req_id}):")
+                    logger.error(f"   Current Location: '{current_location}'")
+                    logger.error(f"   Is in Production List: {is_in_prod}")
+                    logger.error(f"   Production Locations: {prod_locations}")
+                    logger.error(f"   Deliver To: {deliver_to}")
+                    if is_in_prod:
+                        logger.error(f"   ❌ WILL BE DELETED")
+                    else:
+                        logger.error(f"   ✅ WILL BE KEPT")
+                
                 # Check if current location is in production locations
-                if current_location in prod_locations:
-                    logger.info(f"🎯 Container {serial_no} found in production location: {current_location}")
+                if is_in_prod:
+                    logger.warning(f"🎯 FLAGGED FOR DELETION: {serial_no} (current: {current_location})")
+                    
                     containers_to_remove.append({
                         'req_id': req_id,
                         'serial_no': serial_no,
@@ -655,22 +699,31 @@ async def automated_container_cleanup():
                         'req_time': req_time
                     })
                 else:
-                    logger.info(f"📍 Container {serial_no} still at non-production location: {current_location}")
+                    logger.info(f"📍 KEEPING: {serial_no} (current: {current_location} not in production)")
             else:
-                logger.warning(f"⚠️ Could not determine current location for container: {serial_no}")
+                logger.warning(f"⚠️ KEEPING: {serial_no} (location unknown)")
             
-            # Small delay to avoid overwhelming the ERP API (reduced for better performance)
+            # Small delay to avoid overwhelming the ERP API
             await asyncio.sleep(0.5)
         
         # Remove containers that are now in production locations
         if containers_to_remove:
-            logger.info(f"🗑️ Removing {len(containers_to_remove)} containers that moved to production...")
+            logger.warning(f"🗑️ PROCESSING {len(containers_to_remove)} CONTAINERS FOR DELETION!")
+            
+            # Safety check - don't delete if too many containers flagged
+            if len(containers_to_remove) > 10:
+                logger.error(f"🚨 SAFETY ABORT: Too many containers ({len(containers_to_remove)}) flagged for deletion!")
+                logger.error(f"🚨 This could indicate a system error. Aborting cleanup for safety.")
+                return
             
             conn = await get_db_connection()
             try:
                 cursor = await conn.cursor()
+                successful_deletions = 0
                 
                 for container in containers_to_remove:
+                    container_serial = container['serial_no']
+                    
                     try:
                         # Log to history before deleting
                         history_logged = await log_request_to_history(
@@ -689,26 +742,51 @@ async def automated_container_cleanup():
                         if history_logged:
                             # Only delete from REQUESTS if history logging succeeded
                             await cursor.execute("DELETE FROM REQUESTS WHERE req_id = ?", (container['req_id'],))
-                            logger.info(f"✅ Removed container {container['serial_no']} from requests (moved to {container['current_location']})")
+                            successful_deletions += 1
+                            
+                            logger.warning(f"✅ DELETED: Container {container_serial} (moved to {container['current_location']})")
                         else:
-                            logger.warning(f"⚠️ Skipped deleting container {container['serial_no']} due to history logging failure")
+                            logger.error(f"⚠️ SKIPPED: Container {container_serial} (history logging failed)")
                             
                     except Exception as e:
-                        logger.error(f"❌ Error removing container {container['serial_no']}: {e}")
+                        logger.error(f"❌ ERROR: Failed to delete container {container_serial}: {e}")
                 
                 await conn.commit()
-                logger.info(f"✅ Successfully processed {len(containers_to_remove)} container removals")
+                logger.info(f"✅ Deletion complete: {successful_deletions}/{len(containers_to_remove)} successful")
+                
             finally:
                 await release_db_connection(conn)
         else:
             logger.info("✅ No containers need to be removed at this time")
         
-        logger.info(f"🏁 Automated cleanup completed successfully. Checked {len(active_requests)} requests, removed {len(containers_to_remove)} containers")
+        logger.info(f"🏁 Cleanup complete: Checked {len(active_requests)} requests, removed {len(containers_to_remove)} containers")
+        
+        # Send cleanup notification to all connected users
+        await send_cleanup_notification({
+            'type': 'auto_cleanup_complete',
+            'checked_requests': len(active_requests),
+            'removed_containers': len(containers_to_remove),
+            'containers_removed': [
+                {
+                    'serial_no': c['serial_no'],
+                    'current_location': c['current_location'],
+                    'deliver_to': c['deliver_to']
+                } for c in containers_to_remove
+            ] if containers_to_remove else [],
+            'timestamp': datetime.now().isoformat()
+        })
         
     except Exception as e:
-        logger.error(f"❌ Error in automated cleanup: {e}")
+        logger.error(f"❌ CRITICAL ERROR in automated cleanup: {e}")
         import traceback
         logger.error(f"📋 Traceback: {traceback.format_exc()}")
+        
+        # Send error notification
+        await send_cleanup_notification({
+            'type': 'auto_cleanup_error',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        })
 
 async def manual_container_cleanup():
     """
@@ -797,7 +875,7 @@ async def manual_container_cleanup():
                 results['errors'].append(error_msg)
             
             await asyncio.sleep(0.5)  # Shorter delay for manual testing
-        
+        print("------ containers_to_remove ------", containers_to_remove)
         # Remove containers
         if containers_to_remove:
             with AzureSQLConnection() as conn:

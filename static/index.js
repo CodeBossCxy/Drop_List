@@ -1,3 +1,119 @@
+// WebSocket connection for real-time notifications
+const socket = new WebSocket(`ws://${window.location.host}/ws`);
+
+// WebSocket event handlers
+socket.onopen = function(e) {
+    console.log("WebSocket connection established for cleanup notifications");
+};
+
+socket.onclose = function(event) {
+    console.log('WebSocket connection closed. Will attempt to reconnect...');
+    // Don't auto-reload on index page, just log
+};
+
+socket.onerror = function(error) {
+    console.error('WebSocket error:', error);
+};
+
+socket.onmessage = function(event) {
+    try {
+        const data = JSON.parse(event.data);
+        console.log("Received cleanup notification:", data);
+        
+        if (data.type === 'auto_cleanup_complete') {
+            showAutoCleanupNotification(data);
+        } else if (data.type === 'auto_cleanup_error') {
+            showAutoCleanupError(data);
+        }
+    } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+    }
+};
+
+// Function to show auto cleanup completion notification
+function showAutoCleanupNotification(data) {
+    const timestamp = new Date(data.timestamp).toLocaleTimeString();
+    
+    let alertType = 'info';
+    let title = 'Automated Cleanup Complete';
+    let message = `Checked ${data.checked_requests} requests, removed ${data.removed_containers} containers`;
+    
+    if (data.removed_containers > 0) {
+        alertType = 'warning';
+        title = 'Containers Auto-Removed';
+        
+        const removedList = data.containers_removed.map(c => 
+            `• ${c.serial_no} → ${c.current_location} (${c.deliver_to})`
+        ).join('\n');
+        
+        message = `${data.removed_containers} container(s) automatically moved to production:\n\n${removedList}`;
+    }
+    
+    showNotificationPopup(title, message, alertType, timestamp);
+}
+
+// Function to show auto cleanup error notification
+function showAutoCleanupError(data) {
+    const timestamp = new Date(data.timestamp).toLocaleTimeString();
+    showNotificationPopup('Automated Cleanup Error', `Error: ${data.error}`, 'danger', timestamp);
+}
+
+// Function to show notification popup (similar to alert but as modal)
+function showNotificationPopup(title, message, type, timestamp) {
+    // Create modal HTML
+    const modalId = `notification_${Date.now()}`;
+    const modalHTML = `
+        <div class="modal fade" id="${modalId}" tabindex="-1" aria-labelledby="${modalId}Label" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-${type}">
+                        <h5 class="modal-title text-white" id="${modalId}Label">
+                            <i class="fas fa-robot me-2"></i>${title}
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <small class="text-muted">
+                                <i class="fas fa-clock me-1"></i>Auto-cleanup at ${timestamp}
+                            </small>
+                        </div>
+                        <div class="alert alert-${type} alert-dismissible">
+                            <pre class="mb-0 small" style="white-space: pre-wrap; font-family: inherit;">${message}</pre>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">OK</button>
+                        <button type="button" class="btn btn-danger" data-bs-dismiss="modal">
+                            <i class="fas fa-trash me-1"></i>Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove any existing notification modals
+    document.querySelectorAll('[id^="notification_"]').forEach(modal => modal.remove());
+    
+    // Add modal to DOM
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById(modalId));
+    modal.show();
+    
+    // Auto-remove modal after it's hidden
+    document.getElementById(modalId).addEventListener('hidden.bs.modal', function() {
+        this.remove();
+    });
+    
+    // Auto-dismiss after 5 seconds for all auto cleanup notifications
+    setTimeout(() => {
+        modal.hide();
+    }, 5000);
+}
+
 // Loading spinner functions
 function showLoading() {
     console.log("Showing loading spinner");
