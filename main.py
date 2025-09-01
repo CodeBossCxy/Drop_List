@@ -41,7 +41,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://*.azurewebsites.net",  # Azure Web Apps
+        "https://localhost",
+        "http://localhost",
+        "*"  # Allow all origins (you can restrict this later)
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -241,8 +246,9 @@ async def send_cleanup_notification(notification_data):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+    # Azure uses different port environment variables
+    port = int(os.environ.get("PORT", os.environ.get("WEBSITES_PORT", 8000)))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
 
 
 # Validate required environment variables

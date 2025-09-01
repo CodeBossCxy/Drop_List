@@ -1,5 +1,6 @@
 // WebSocket connection for real-time notifications
-const socket = new WebSocket(`ws://${window.location.host}/ws`);
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
 const messages = document.getElementById("messages");
 
 // Function to get barcode image URL for a location
