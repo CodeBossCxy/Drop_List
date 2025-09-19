@@ -174,11 +174,19 @@ async function fetchMasterUnitContainers(masterUnit) {
     console.log('\n=== FETCH MASTER UNIT CONTAINERS START ===');
     console.log('fetchMasterUnitContainers called with masterUnit:', masterUnit);
     
+    // Validate input
+    if (!masterUnit || masterUnit.trim() === '') {
+        console.error('❌ Master unit is empty or null');
+        displayMessage("Please enter a valid master unit number");
+        return;
+    }
+    
     showLoading();
     try {
-        console.log('Making API call to:', `/api/master-unit/${masterUnit}`);
+        const apiUrl = `/api/master-unit/${encodeURIComponent(masterUnit)}`;
+        console.log('Making API call to:', apiUrl);
         
-        const response = await fetch(`/api/master-unit/${masterUnit}`, {
+        const response = await fetch(apiUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -1038,29 +1046,37 @@ async function handleRequest(serialNo, partNo, button) {
 }
 
 // Add event listeners to your inputs
-document.getElementById('part-no-input').addEventListener('keydown', async (e) => {
-    // const partNo = e.target.value;
-    // if (partNo && e.key === "Enter") {
-    //     const data = await fetchContainers(partNo);
-    // }
-    enterKeyPressed(e);
-});
+function setupEventListeners() {
+    console.log('Setting up event listeners...');
+    
+    const inputs = [
+        'part-no-input',
+        'Workcenter-input', 
+        'shipper-number-input',
+        'serial-no-input',
+        'master-unit-input'
+    ];
+    
+    inputs.forEach(inputId => {
+        const element = document.getElementById(inputId);
+        if (element) {
+            console.log(`✅ Adding event listener to ${inputId}`);
+            element.addEventListener('keydown', async (e) => {
+                enterKeyPressed(e);
+            });
+        } else {
+            console.error(`❌ Element not found: ${inputId}`);
+        }
+    });
+}
 
-document.getElementById('Workcenter-input').addEventListener('keydown', async (e) => {
-    enterKeyPressed(e);
-});
-
-document.getElementById('shipper-number-input').addEventListener('keydown', async (e) => {
-    enterKeyPressed(e);
-});
-
-document.getElementById('serial-no-input').addEventListener('keydown', async (e) => {
-    enterKeyPressed(e);
-});
-
-document.getElementById('master-unit-input').addEventListener('keydown', async (e) => {
-    enterKeyPressed(e);
-});
+// Setup event listeners when DOM is loaded
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupEventListeners);
+} else {
+    // DOM is already loaded
+    setupEventListeners();
+}
 
 async function enterKeyPressed(e) {
     console.log('\n🔥 ENTER KEY EVENT FIRED!');

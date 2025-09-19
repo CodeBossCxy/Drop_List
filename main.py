@@ -559,10 +559,42 @@ async def get_containers_by_master_unit(master_unit_key: str) -> List[str]:
         return []
     
     print("-----response_data-----", response_data)
-    columns = response_data.get("tables")[0].get("columns", [])
-    rows = response_data.get("tables")[0].get("rows", [])
+    try:
+        columns = response_data.get("tables")[0].get("columns", [])
+        rows = response_data.get("tables")[0].get("rows", [])
+        print(f"[get_containers_by_master_unit] Extracted {len(rows)} rows with {len(columns)} columns")
+    except (IndexError, TypeError, KeyError) as e:
+        print(f"[get_containers_by_master_unit] Failed to extract table data: {e}")
+        print(f"[get_containers_by_master_unit] Response structure: {response_data}")
+        return []
+    
     df = pd.DataFrame(rows, columns=columns)
     df = df.sort_values(by=["Add_Date", "Serial_No"], ascending=[True, True])
+    
+    # Get existing serial numbers from database to mark as requested
+    try:
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            await cursor.execute("SELECT serial_no FROM REQUESTS")
+            rows = await cursor.fetchall()
+            existing_serials = {row[0] for row in rows}
+            
+            # Add isRequested column
+            df['isRequested'] = df['Serial_No'].isin(existing_serials)
+        finally:
+            await release_db_connection(conn)
+            
+    except Exception as e:
+        print(f"Error checking existing containers: {e}")
+        df['isRequested'] = False
+    
+    print("[get_containers_by_master_unit] df:", df[['Serial_No', 'Part_No', 'Quantity', 'Location', 'isRequested']])
+    
+    # Filter out containers from locations starting with "J-B"
+    df = df[~df['Location'].str.startswith('J-B', na=False)]
+    
+    df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
     print("-----df-----", df)
     return df.to_dict(orient="records")
 
