@@ -169,6 +169,69 @@ async function fetchExistingRequests() {
         return new Set(); // Return empty set if there's an error
     }
 }
+
+async function fetchMasterUnitContainers(masterUnit) {
+    console.log('\n=== FETCH MASTER UNIT CONTAINERS START ===');
+    console.log('fetchMasterUnitContainers called with masterUnit:', masterUnit);
+    
+    showLoading();
+    try {
+        console.log('Making API call to:', `/api/master-unit/${masterUnit}`);
+        
+        const response = await fetch(`/api/master-unit/${masterUnit}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }   
+        });
+        
+        console.log('API response status:', response.status, response.statusText);
+        
+        const responseText = await response.text();
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error('Failed to parse JSON response:', jsonError);
+            console.error('Response text:', responseText);
+            throw new Error('Invalid JSON response from server');
+        }
+        console.log('API response data:', data);
+        
+        // DETAILED DATA INSPECTION
+        console.log('🔍 DETAILED API RESPONSE ANALYSIS:');
+        console.log('- data type:', typeof data);
+        console.log('- data keys:', Object.keys(data));
+        console.log('- data.containers exists:', !!data.containers);
+        console.log('- data.containers type:', typeof data.containers);
+        if (data.containers) {
+            console.log('- data.containers length:', data.containers.length);
+            console.log('- data.containers[0]:', data.containers[0]);
+        }
+        
+        // Check if the containers array is empty
+        if (!data.containers || data.containers.length === 0) {
+            console.log('❌ No containers found - showing "No containers in master unit" message');
+            console.log('- data.containers is:', data.containers);
+            clearContainersTable();
+            displayMessage("No containers found in master unit");
+            return;
+        }
+        
+        console.log('✅ Containers found - calling updateMasterUnitTable with:', data.containers.length, 'items');
+        console.log('- First item:', data.containers[0]);
+        
+        // Update the UI with the master unit data
+        updateMasterUnitTable(data.containers, masterUnit);
+    } catch (error) {
+        console.error('Error in fetchMasterUnitContainers:', error);
+        clearContainersTable();
+        displayMessage("Error fetching master unit data. Please try again.");
+    } finally {
+        hideLoading();
+        console.log('=== FETCH MASTER UNIT CONTAINERS END ===\n');
+    }
+}
 async function fetchContainerInfo(serialNo) {
     console.log('\n=== FETCH CONTAINER INFO START ===');
     console.log('fetchContainerInfo called with serialNo:', serialNo);
@@ -592,6 +655,234 @@ function updateContainersTable(data) {
     console.log('=== updateContainersTable END ===\n');
 }
 
+function updateMasterUnitTable(containers, masterUnit) {
+    console.log('=== updateMasterUnitTable START ===');
+    console.log('updateMasterUnitTable called with containers:', containers);
+    console.log('Master unit:', masterUnit);
+    console.log('Containers length:', containers.length);
+    
+    const containersTable = document.getElementById('containers-table');
+    console.log('containersTable element found:', !!containersTable);
+    
+    // Clear existing content
+    containersTable.innerHTML = '';
+    console.log('containersTable cleared');
+    
+    // Create master unit header with request whole unit button
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'mb-4';
+    headerDiv.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center p-3 bg-light rounded">
+            <div>
+                <h4 class="mb-1">Master Unit: ${masterUnit}</h4>
+                <p class="mb-0 text-muted">${containers.length} containers found</p>
+            </div>
+            <button class="btn btn-success btn-lg" onclick="requestWholeMasterUnit('${masterUnit}', ${JSON.stringify(containers).replace(/"/g, '&quot;')})">
+                <i class="fas fa-check-circle me-2"></i>Request Whole Master Unit
+            </button>
+        </div>
+    `;
+    
+    // Create table
+    const table = document.createElement('table');
+    table.className = 'table table-hover mt-3';
+    console.log('Table created with classes:', table.className);
+    
+    // Create table header
+    const thead = document.createElement('thead');
+    thead.innerHTML = `
+        <tr>
+            <th>Serial No</th>
+            <th>Part No</th>
+            <th>Revision</th>
+            <th>Quantity</th>
+            <th>Location</th>
+            <th>Action</th>
+        </tr>
+    `;
+    console.log('Table header created');
+    
+    // Create table body
+    const tbody = document.createElement('tbody');
+    console.log('Table body created');
+    
+    containers.forEach((item, index) => {
+        console.log(`\n--- Processing master unit container ${index} ---`);
+        console.log(`Container ${index} data:`, item);
+        
+        const tr = document.createElement('tr');
+        tr.id = `row-${item.Serial_No}`;
+        console.log(`Created tr element with ID: ${tr.id}`);
+        
+        tr.innerHTML = `
+            <td>${item.Serial_No}</td>
+            <td>${item.Part_No}</td>
+            <td>${item.Part_No_Revision ? item.Part_No_Revision.slice(-3) : ''}</td>
+            <td>${item.Quantity}</td>
+            <td>${item.Location}</td>
+            <td>
+                <button class="btn ${item.isRequested ? 'btn-secondary' : 'btn-primary'} btn-sm" 
+                        onclick="handleRequest('${item.Serial_No}', '${item.Part_No}', this)"
+                        ${item.isRequested ? 'disabled' : ''}>
+                    ${item.isRequested ? 'Requested' : 'Request'}
+                </button>
+            </td>
+        `;
+        console.log(`Container ${index} innerHTML set`);
+        
+        // Add strikethrough and opacity if already requested
+        if (item.isRequested) {
+            console.log(`Container ${index} is already requested - adding strikethrough`);
+            tr.style.textDecoration = 'line-through';
+            tr.style.opacity = '0.6';
+        }
+        
+        // Highlight rows with different colors for better visibility
+        if (index % 2 === 1) {
+            console.log(`Container ${index} - adding alternate row styling`);
+            tr.style.backgroundColor = '#f8f9fa';
+        }
+        
+        tbody.appendChild(tr);
+        console.log(`Container ${index} appended to tbody`);
+    });
+    
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    
+    // Add header and table to containers table
+    containersTable.appendChild(headerDiv);
+    containersTable.appendChild(table);
+    
+    console.log('Master unit table structure complete');
+    console.log('=== updateMasterUnitTable END ===\n');
+}
+
+async function requestWholeMasterUnit(masterUnit, containers) {
+    console.log('\n🚀 REQUEST WHOLE MASTER UNIT CALLED');
+    console.log('- masterUnit:', masterUnit);
+    console.log('- containers:', containers);
+    
+    // Get the workcenter value for validation
+    const workcenter = document.getElementById('Workcenter-input').value;
+    const revision = document.getElementById('shipper-number-input').value;
+    
+    // Validation
+    if (!workcenter) {
+        console.log('❌ Validation failed: No workcenter entered');
+        alert('Please enter a workcenter before requesting the master unit');
+        return;
+    }
+    
+    // Filter out already requested containers
+    const availableContainers = containers.filter(container => !container.isRequested);
+    
+    if (availableContainers.length === 0) {
+        console.log('❌ No available containers to request');
+        alert('All containers in this master unit have already been requested');
+        return;
+    }
+    
+    // Confirm the action
+    const confirmMessage = `Request all ${availableContainers.length} available containers from Master Unit ${masterUnit}?`;
+    if (!confirm(confirmMessage)) {
+        console.log('🚫 User cancelled master unit request');
+        return;
+    }
+    
+    console.log(`✅ Requesting ${availableContainers.length} containers from master unit ${masterUnit}`);
+    
+    let successCount = 0;
+    let failureCount = 0;
+    const errors = [];
+    
+    // Show progress indicator
+    const originalButton = document.querySelector(`button[onclick*="requestWholeMasterUnit"]`);
+    if (originalButton) {
+        originalButton.disabled = true;
+        originalButton.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Requesting...';
+    }
+    
+    // Request each container sequentially to avoid overwhelming the server
+    for (const container of availableContainers) {
+        try {
+            console.log(`Requesting container: ${container.Serial_No}`);
+            
+            const requestBody = {
+                workcenter: workcenter,
+                revision: revision,
+                location: container.Location,
+                quantity: container.Quantity,
+                req_time: new Date().toISOString()
+            };
+            
+            const response = await fetch(`/part/${container.Part_No}/${container.Serial_No}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestBody)
+            });
+            
+            if (response.ok) {
+                successCount++;
+                console.log(`✅ Successfully requested container: ${container.Serial_No}`);
+                
+                // Update the UI to show this container as requested
+                const row = document.getElementById(`row-${container.Serial_No}`);
+                if (row) {
+                    const button = row.querySelector('button');
+                    if (button) {
+                        button.disabled = true;
+                        button.textContent = 'Requested';
+                        button.className = 'btn btn-secondary btn-sm';
+                    }
+                    row.style.textDecoration = 'line-through';
+                    row.style.opacity = '0.6';
+                }
+            } else {
+                failureCount++;
+                const errorMsg = `Failed to request container ${container.Serial_No}: ${response.status}`;
+                console.error(`❌ ${errorMsg}`);
+                errors.push(errorMsg);
+            }
+            
+            // Small delay between requests to avoid overwhelming the server
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+        } catch (error) {
+            failureCount++;
+            const errorMsg = `Error requesting container ${container.Serial_No}: ${error.message}`;
+            console.error(`❌ ${errorMsg}`);
+            errors.push(errorMsg);
+        }
+    }
+    
+    // Reset button state
+    if (originalButton) {
+        if (successCount === availableContainers.length) {
+            originalButton.innerHTML = '<i class="fas fa-check me-2"></i>All Requested';
+            originalButton.className = 'btn btn-secondary btn-lg';
+        } else {
+            originalButton.disabled = false;
+            originalButton.innerHTML = '<i class="fas fa-check-circle me-2"></i>Request Whole Master Unit';
+        }
+    }
+    
+    // Show result message
+    let message = `Master Unit ${masterUnit} request completed:\n`;
+    message += `✅ Successfully requested: ${successCount} containers\n`;
+    
+    if (failureCount > 0) {
+        message += `❌ Failed requests: ${failureCount} containers\n`;
+        message += `\nErrors:\n${errors.join('\n')}`;
+    }
+    
+    alert(message);
+    
+    console.log(`🏁 Master unit request complete: ${successCount} success, ${failureCount} failures`);
+}
+
 // Function to handle request button click
 async function handleRequest(serialNo, partNo, button) {
     console.log('\n🚀 HANDLE REQUEST CALLED');
@@ -767,6 +1058,10 @@ document.getElementById('serial-no-input').addEventListener('keydown', async (e)
     enterKeyPressed(e);
 });
 
+document.getElementById('master-unit-input').addEventListener('keydown', async (e) => {
+    enterKeyPressed(e);
+});
+
 async function enterKeyPressed(e) {
     console.log('\n🔥 ENTER KEY EVENT FIRED!');
     console.log('- Key pressed:', e.key);
@@ -775,8 +1070,10 @@ async function enterKeyPressed(e) {
     // Get current values
     const serialNo = document.getElementById('serial-no-input').value;
     const partNo = document.getElementById('part-no-input').value;
+    const masterUnit = document.getElementById('master-unit-input').value;
     console.log('- Serial number value:', serialNo);
     console.log('- Part number value:', partNo);
+    console.log('- Master unit value:', masterUnit);
     
     // Skip processing if Enter wasn't pressed
     if (e.key !== "Enter") {
@@ -790,22 +1087,29 @@ async function enterKeyPressed(e) {
     if (serialNo) {
         console.log('✅ Serial number exists - calling fetchContainerInfo');
         const data = await fetchContainerInfo(serialNo);
+        return; // Exit early - don't process part number or master unit
+    }
+    
+    // Priority 2: If master unit exists, search by master unit (regardless of which field triggered)
+    if (masterUnit) {
+        console.log('✅ Master unit exists - calling fetchMasterUnitContainers');
+        const data = await fetchMasterUnitContainers(masterUnit);
         return; // Exit early - don't process part number
     }
     
-    // Priority 2: If part number exists (and no serial number), search by part number
+    // Priority 3: If part number exists (and no serial number or master unit), search by part number
     if (partNo) {
         console.log('✅ Part number exists - calling fetchContainers');
         const data = await fetchContainers(partNo);
         return; // Exit early
     }
     
-    // Priority 3: If neither exists, show message (only if Enter was pressed in search-related fields)
-    const searchFields = ['part-no-input', 'serial-no-input'];
+    // Priority 4: If none exist, show message (only if Enter was pressed in search-related fields)
+    const searchFields = ['part-no-input', 'serial-no-input', 'master-unit-input'];
     if (searchFields.includes(e.target.id)) {
-        console.log("❌ No part number or serial number entered");
+        console.log("❌ No part number, serial number, or master unit entered");
         clearContainersTable();
-        displayMessage("Please enter a part number or serial number");
+        displayMessage("Please enter a part number, serial number, or master unit");
     } else {
         console.log('⏭️ Enter pressed in non-search field, no action needed');
     }

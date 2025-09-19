@@ -522,6 +522,93 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
     df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
     return df.to_dict(orient="records")
 
+
+async def get_containers_by_master_unit(master_unit_key: str) -> List[str]:
+    print(f"[get_containers_by_master_unit] Starting search for master_unit: {master_unit_key}")
+    containers_by_master_unit_id = 4390
+    url = f"{ERP_API_BASE}{containers_by_master_unit_id}/execute"
+    payload = {
+        "inputs": {
+            "Master_Unit_Key": master_unit_key
+        }
+    }
+    print(f"[get_containers_by_master_unit] Making request to: {url}")
+    
+    try:
+        client = await get_http_client()
+        response = await client.post(url, headers=headers, json=payload)
+        print(f"[get_containers_by_master_unit] Response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"[get_containers_by_master_unit] HTTP error: {response.status_code}")
+            return []
+            
+    except httpx.TimeoutException:
+        print(f"[get_containers_by_master_unit] Request timeout")
+        return []
+    except httpx.RequestError as e:
+        print(f"[get_containers_by_master_unit] Request error: {e}")
+        return []
+    
+    try:
+        response_data = response.json()
+        print(f"[get_containers_by_master_unit] Successfully parsed JSON response")
+    except (ValueError, json.JSONDecodeError) as e:
+        print(f"[get_containers_by_master_unit] Failed to parse JSON response: {e}")
+        print(f"[get_containers_by_master_unit] Response text: {response.text}")
+        return []
+    
+    print("-----response_data-----", response_data)
+    columns = response_data.get("tables")[0].get("columns", [])
+    rows = response_data.get("tables")[0].get("rows", [])
+    df = pd.DataFrame(rows, columns=columns)
+    df = df.sort_values(by=["Add_Date", "Serial_No"], ascending=[True, True])
+    print("-----df-----", df)
+    return df.to_dict(orient="records")
+
+async def master_unit_key_to_no(master_unit_key: str) -> str:
+    print(f"[gmaster_unit_key_to_no] Starting search for master_unit: {master_unit_key}")
+    # You'll need to find the correct datasource ID for master unit search from Plex
+    # This is a placeholder - replace with actual Plex datasource ID for master unit lookup
+    containers_by_master_unit_id = 233972  # Replace with actual datasource ID
+    url = f"{ERP_API_BASE}{containers_by_master_unit_id}/execute"
+    payload = {
+        "inputs": {
+            "Master_Unit_No": master_unit_key
+        }
+    }
+    print(f"[master_unit_key_to_no] Making request to: {url}")
+    
+    try:
+        client = await get_http_client()
+        response = await client.post(url, headers=headers, json=payload)
+        print(f"[master_unit_key_to_no] Response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"[master_unit_key_to_no] HTTP error: {response.status_code}")
+            return []
+            
+    except httpx.TimeoutException:
+        print(f"[master_unit_key_to_no] Request timeout")
+        return []
+    except httpx.RequestError as e:
+        print(f"[master_unit_key_to_no] Request error: {e}")
+        return []
+    
+    try:
+        response_data = response.json()
+        print(f"[master_unit_key_to_no] Successfully parsed JSON response")
+    except (ValueError, json.JSONDecodeError) as e:
+        print(f"[master_unit_key_to_no] Failed to parse JSON response: {e}")
+        print(f"[master_unit_key_to_no] Response text: {response.text}")
+        return []
+    
+    print("-----response_data-----", response_data)
+    return response_data["outputs"]['Master_Unit_Key']
+
+    
+
+
 async def get_prod_locations() -> List[str]:
     """Get production locations from ERP API"""
     prod_locations_id = 18120
@@ -1083,6 +1170,25 @@ async def request_serial_no(request: Request, serial_no: str):
     except Exception as e:
         print(f"Error in request_serial_no: {e}")
         return JSONResponse(content={"dataframe": [], "error": str(e)}, status_code=500)
+
+@app.post("/api/master-unit/{master_unit}", response_class=JSONResponse)
+async def get_master_unit_containers(request: Request, master_unit: str):
+    try:
+        print(f"[get_master_unit_containers] Processing master_unit: {master_unit}")
+        master_unit_key = await master_unit_key_to_no(master_unit)
+        print("-----master_unit_key-----", master_unit_key)
+        containers = await get_containers_by_master_unit(master_unit_key)
+        print(f"[get_master_unit_containers] Found {len(containers)} containers")
+        result = {"containers": jsonable_encoder(containers)}
+        print(f"[get_master_unit_containers] Returning successful response")
+        return JSONResponse(content=result)
+    except Exception as e:
+        print(f"[get_master_unit_containers] ERROR: {str(e)}")
+        import traceback
+        print(f"[get_master_unit_containers] TRACEBACK: {traceback.format_exc()}")
+        error_response = {"containers": [], "error": str(e)}
+        print(f"[get_master_unit_containers] Returning error response: {error_response}")
+        return JSONResponse(content=error_response, status_code=500)
 
 
 @app.get("/requests", response_class=HTMLResponse)
