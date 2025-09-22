@@ -275,30 +275,16 @@ socket.onmessage = function(event) {
 
 // Function to show auto cleanup completion notification
 function showAutoCleanupNotification(data) {
-    const timestamp = new Date(data.timestamp).toLocaleTimeString();
-    
-    let alertType = 'info';
-    let title = 'Automated Cleanup Complete';
-    let message = `Checked ${data.checked_requests} requests, removed ${data.removed_containers} containers`;
-    
-    if (data.removed_containers > 0) {
-        alertType = 'warning';
-        title = 'Containers Auto-Removed';
-        
-        const removedList = data.containers_removed.map(c => 
-            `• ${c.serial_no} → ${c.current_location} (${c.deliver_to})`
-        ).join('\n');
-        
-        message = `${data.removed_containers} container(s) automatically moved to production:\n\n${removedList}`;
-    }
-    
-    showNotificationPopup(title, message, alertType, timestamp);
+    console.log('Auto cleanup completed - popups disabled');
+    // Popup notifications have been disabled
+    return;
 }
 
 // Function to show auto cleanup error notification
 function showAutoCleanupError(data) {
-    const timestamp = new Date(data.timestamp).toLocaleTimeString();
-    showNotificationPopup('Automated Cleanup Error', `Error: ${data.error}`, 'danger', timestamp);
+    console.log('Auto cleanup error - popups disabled');
+    // Popup notifications have been disabled
+    return;
 }
 
 // Function to show notification popup (similar to alert but as modal)
@@ -752,7 +738,39 @@ function closeCleanupResults() {
 //     const tbody = document.getElementById("containerTableBody");
 //     const row = createRowElement(data);
 //     tbody.appendChild(row);
-    
+
 //     console.log("Added new row to table");
 // };
+
+
+// Function to show brief status messages
+function showStatusMessage(message, type) {
+    // Create a temporary toast-like notification
+    const statusDiv = document.createElement('div');
+    statusDiv.className = `alert alert-${type} position-fixed`;
+    statusDiv.style.cssText = `
+        top: 80px;
+        right: 20px;
+        z-index: 9999;
+        min-width: 250px;
+        opacity: 0;
+        transition: opacity 0.3s ease-in-out;
+    `;
+    statusDiv.innerHTML = `
+        <i class="fas fa-${type === 'success' ? 'check' : 'exclamation-triangle'} me-2"></i>
+        ${message}
+    `;
+
+    document.body.appendChild(statusDiv);
+
+    // Fade in
+    setTimeout(() => statusDiv.style.opacity = '1', 10);
+
+    // Auto remove after 2 seconds
+    setTimeout(() => {
+        statusDiv.style.opacity = '0';
+        setTimeout(() => statusDiv.remove(), 300);
+    }, 2000);
+}
+
 

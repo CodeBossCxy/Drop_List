@@ -1,3 +1,32 @@
+// Consolidated API request function for better efficiency and error handling
+async function apiRequest(url, options = {}) {
+    const defaultOptions = {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    };
+
+    const config = { ...defaultOptions, ...options };
+
+    try {
+        console.log(`[API] Making ${config.method} request to: ${url}`);
+        const response = await fetch(url, config);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        console.log(`[API] Request successful for: ${url}`);
+        return { success: true, data };
+
+    } catch (error) {
+        console.error(`[API] Request failed for ${url}:`, error);
+        return { success: false, error: error.message };
+    }
+}
+
 // WebSocket connection for real-time notifications
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
@@ -33,30 +62,16 @@ socket.onmessage = function(event) {
 
 // Function to show auto cleanup completion notification
 function showAutoCleanupNotification(data) {
-    const timestamp = new Date(data.timestamp).toLocaleTimeString();
-    
-    let alertType = 'info';
-    let title = 'Automated Cleanup Complete';
-    let message = `Checked ${data.checked_requests} requests, removed ${data.removed_containers} containers`;
-    
-    if (data.removed_containers > 0) {
-        alertType = 'warning';
-        title = 'Containers Auto-Removed';
-        
-        const removedList = data.containers_removed.map(c => 
-            `• ${c.serial_no} → ${c.current_location} (${c.deliver_to})`
-        ).join('\n');
-        
-        message = `${data.removed_containers} container(s) automatically moved to production:\n\n${removedList}`;
-    }
-    
-    showNotificationPopup(title, message, alertType, timestamp);
+    console.log('Auto cleanup completed - popups disabled');
+    // Popup notifications have been disabled
+    return;
 }
 
 // Function to show auto cleanup error notification
 function showAutoCleanupError(data) {
-    const timestamp = new Date(data.timestamp).toLocaleTimeString();
-    showNotificationPopup('Automated Cleanup Error', `Error: ${data.error}`, 'danger', timestamp);
+    console.log('Auto cleanup error - popups disabled');
+    // Popup notifications have been disabled
+    return;
 }
 
 // Function to show notification popup (similar to alert but as modal)
@@ -243,29 +258,19 @@ async function fetchMasterUnitContainers(masterUnit) {
 async function fetchContainerInfo(serialNo) {
     console.log('\n=== FETCH CONTAINER INFO START ===');
     console.log('fetchContainerInfo called with serialNo:', serialNo);
-    
+
     showLoading();
     try {
         console.log('Making API call to:', `/${serialNo}`);
-        
-        const response = await fetch(`/${serialNo}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }   
-        });
-        
-        console.log('API response status:', response.status, response.statusText);
-        
-        const responseText = await response.text();
-        let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch (jsonError) {
-            console.error('Failed to parse JSON response:', jsonError);
-            console.error('Response text:', responseText);
-            throw new Error('Invalid JSON response from server');
+
+        // Use consolidated API function
+        const result = await apiRequest(`/${serialNo}`, { method: 'POST' });
+
+        if (!result.success) {
+            throw new Error(result.error);
         }
+
+        const data = result.data;
         console.log('API response data:', data);
         
         // DETAILED DATA INSPECTION
@@ -307,30 +312,19 @@ async function fetchContainerInfo(serialNo) {
 async function fetchContainers(partNo) {
     console.log('\n=== FETCH CONTAINERS START ===');
     console.log('fetchContainers called with partNo:', partNo);
-    
+
     showLoading();
     try {
         console.log('Making API call to:', `/part/${partNo}`);
-        
-        // Fetch available containers
-        const response = await fetch(`/part/${partNo}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        console.log('API response status:', response.status, response.statusText);
-        
-        const responseText = await response.text();
-        let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch (jsonError) {
-            console.error('Failed to parse JSON response:', jsonError);
-            console.error('Response text:', responseText);
-            throw new Error('Invalid JSON response from server');
+
+        // Use consolidated API function
+        const result = await apiRequest(`/part/${partNo}`, { method: 'POST' });
+
+        if (!result.success) {
+            throw new Error(result.error);
         }
+
+        const data = result.data;
         console.log('API response data:', data);
         
         // DETAILED DATA INSPECTION
@@ -510,23 +504,22 @@ function updateContainerTable(data) {
     console.log('Table structure complete');
     
     // Start persistent monitoring of first row styling
-    startFirstRowMonitoring();
+    applyFirstRowStyling();
     
     console.log('=== updateContainersTable END ===\n');
 }
 
-// Function to update containers table
+// Function to update containers table with optimized DOM manipulation
 function updateContainersTable(data) {
     console.log('=== updateContainersTable START ===');
     console.log('updateContainersTable called with data:', data);
     console.log('Data length:', data.length);
-    
+
     const containersTable = document.getElementById('containers-table');
     console.log('containersTable element found:', !!containersTable);
-    
-    // Clear existing content
-    containersTable.innerHTML = '';
-    console.log('containersTable cleared');
+
+    // Use DocumentFragment for efficient DOM updates
+    const fragment = document.createDocumentFragment();
     
     // Create table
     const table = document.createElement('table');
@@ -658,7 +651,7 @@ function updateContainersTable(data) {
     console.log('Table structure complete');
     
     // Start persistent monitoring of first row styling
-    startFirstRowMonitoring();
+    applyFirstRowStyling();
     
     console.log('=== updateContainersTable END ===\n');
 }
@@ -1258,63 +1251,48 @@ async function getContainersByPartNo() {
 
 // getContainersByPartNo();
 
-// PERSISTENT FIRST ROW GREEN STYLING MONITOR
-let firstRowMonitor = null;
+// EFFICIENT FIRST ROW STYLING WITH CSS CLASSES
+function applyFirstRowStyling() {
+    try {
+        const containersTable = document.getElementById('containers-table');
+        if (!containersTable) return;
 
-function startFirstRowMonitoring() {
-    console.log('🟢 Starting persistent first row monitoring');
-    
-    // Clear any existing monitor
-    if (firstRowMonitor) {
-        clearInterval(firstRowMonitor);
-    }
-    
-    // Function to aggressively ensure first row is green
-    function enforceFirstRowGreen() {
-        try {
-            const containersTable = document.getElementById('containers-table');
-            if (!containersTable) return;
-            
-            const firstRow = containersTable.querySelector('tbody tr:first-child, tr[data-first-row="true"], .first-container-row, .oldest-container');
-            
-            if (firstRow) {
-                const currentBgColor = window.getComputedStyle(firstRow).backgroundColor;
-                const isGreen = currentBgColor.includes('212, 237, 218') || currentBgColor.includes('#d4edda');
-                
-                if (!isGreen) {
-                    console.log('🔴 First row lost green color, reapplying!');
-                    console.log('Current background:', currentBgColor);
-                    
-                    // NUCLEAR OPTION - Multiple aggressive styling methods
-                    const superGreenStyle = 'background-color: #d4edda !important; border-left: 4px solid #28a745 !important; border: 2px solid #28a745 !important;';
-                    
-                    firstRow.style.cssText = superGreenStyle;
-                    firstRow.setAttribute('style', superGreenStyle);
-                    firstRow.style.setProperty('background-color', '#d4edda', 'important');
-                    firstRow.style.setProperty('border-left', '4px solid #28a745', 'important');
-                    firstRow.style.setProperty('border', '2px solid #28a745', 'important');
-                    
-                    // Also force all cells
-                    const cells = firstRow.querySelectorAll('td');
-                    cells.forEach(cell => {
-                        cell.style.cssText = 'background-color: #d4edda !important; color: #000 !important;';
-                        cell.setAttribute('style', 'background-color: #d4edda !important; color: #000 !important;');
-                        cell.style.setProperty('background-color', '#d4edda', 'important');
-                    });
-                    
-                    console.log('🟢 First row styling reapplied');
-                }
-            }
-        } catch (error) {
-            console.error('Error in first row monitoring:', error);
+        // Remove any existing first-row classes
+        containersTable.querySelectorAll('.first-row-highlight').forEach(row => {
+            row.classList.remove('first-row-highlight');
+        });
+
+        // Apply to first row
+        const firstRow = containersTable.querySelector('tbody tr:first-child');
+        if (firstRow) {
+            firstRow.classList.add('first-row-highlight');
+            console.log('🟢 First row styling applied efficiently');
         }
+    } catch (error) {
+        console.error('Error applying first row styling:', error);
     }
-    
-    // Run immediately
-    setTimeout(enforceFirstRowGreen, 100);
-    
-    // Then monitor every 500ms
-    firstRowMonitor = setInterval(enforceFirstRowGreen, 500);
-    
-    console.log('🟢 First row monitor started');
 }
+
+// Add this CSS class to be more efficient than inline styles
+function addFirstRowStylesheet() {
+    if (!document.getElementById('first-row-styles')) {
+        const style = document.createElement('style');
+        style.id = 'first-row-styles';
+        style.textContent = `
+            .first-row-highlight {
+                background-color: #d4edda !important;
+                border-left: 4px solid #28a745 !important;
+                border: 2px solid #28a745 !important;
+            }
+            .first-row-highlight td {
+                background-color: #d4edda !important;
+                color: #000 !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+}
+
+// Initialize stylesheet when DOM is ready
+document.addEventListener('DOMContentLoaded', addFirstRowStylesheet);
+

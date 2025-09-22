@@ -262,7 +262,7 @@ if missing_vars:
 connection_pool = None
 
 async def get_db_connection():
-    """Get an async database connection from the pool"""
+    """Get an async database connection from the pool with retry logic"""
     global connection_pool
     if connection_pool is None:
         connection_string = f'''
@@ -273,11 +273,32 @@ async def get_db_connection():
             Pwd={password};
             Encrypt=yes;
             TrustServerCertificate=no;
-            Connection Timeout=60;
+            Connection Timeout={AppConfig.DB_CONNECTION_TIMEOUT};
+            Command Timeout={AppConfig.DB_COMMAND_TIMEOUT};
         '''
-        connection_pool = await aioodbc.create_pool(dsn=connection_string, minsize=5, maxsize=20)
-    
-    return await connection_pool.acquire()
+        try:
+            connection_pool = await aioodbc.create_pool(
+                dsn=connection_string,
+                minsize=AppConfig.DB_POOL_MIN_SIZE,
+                maxsize=AppConfig.DB_POOL_MAX_SIZE,
+                pool_recycle=AppConfig.DB_POOL_RECYCLE
+            )
+            logger.info("✅ Database connection pool created successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to create database connection pool: {e}")
+            raise
+
+    # Retry logic for acquiring connections
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return await connection_pool.acquire()
+        except Exception as e:
+            if attempt == max_retries - 1:
+                logger.error(f"❌ Failed to acquire database connection after {max_retries} attempts: {e}")
+                raise
+            logger.warning(f"⚠️ Database connection attempt {attempt + 1} failed, retrying...")
+            await asyncio.sleep(0.1 * (attempt + 1))  # Exponential backoff
 
 async def release_db_connection(conn):
     """Release a database connection back to the pool"""
@@ -360,21 +381,81 @@ async def create_history_table():
 http_client = None
 
 async def get_http_client():
-    """Get the global HTTP client instance"""
+    """Get the global HTTP client instance with optimized settings"""
     global http_client
     if http_client is None:
         http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0),
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5)
+            timeout=httpx.Timeout(
+                connect=AppConfig.HTTP_CONNECT_TIMEOUT,
+                read=AppConfig.HTTP_READ_TIMEOUT,
+                write=AppConfig.HTTP_READ_TIMEOUT,
+                pool=AppConfig.HTTP_READ_TIMEOUT
+            ),
+            limits=httpx.Limits(
+                max_connections=AppConfig.HTTP_MAX_CONNECTIONS,
+                max_keepalive_connections=AppConfig.HTTP_MAX_KEEPALIVE,
+                keepalive_expiry=AppConfig.HTTP_KEEPALIVE_EXPIRY
+            ),
+            follow_redirects=True,
+            http2=True  # Enable HTTP/2 for better performance
         )
     return http_client
 
 
-# --- Config ---
-ERP_API_BASE = "https://Vintech-CZ.on.plex.com/api/datasources/"
+# --- Configuration Management ---
+class AppConfig:
+    """Centralized configuration management for the application"""
 
-plex_username = "VintechCZWS@plex.com"
-plex_password = "09c11ed-40b3-4"
+    # Database settings
+    DB_CONNECTION_TIMEOUT = int(os.getenv('DB_CONNECTION_TIMEOUT', '120'))
+    DB_COMMAND_TIMEOUT = int(os.getenv('DB_COMMAND_TIMEOUT', '60'))
+    DB_POOL_MIN_SIZE = int(os.getenv('DB_POOL_MIN_SIZE', '5'))
+    DB_POOL_MAX_SIZE = int(os.getenv('DB_POOL_MAX_SIZE', '25'))
+    DB_POOL_RECYCLE = int(os.getenv('DB_POOL_RECYCLE', '3600'))
+
+    # HTTP client settings
+    HTTP_CONNECT_TIMEOUT = float(os.getenv('HTTP_CONNECT_TIMEOUT', '10.0'))
+    HTTP_READ_TIMEOUT = float(os.getenv('HTTP_READ_TIMEOUT', '60.0'))
+    HTTP_MAX_CONNECTIONS = int(os.getenv('HTTP_MAX_CONNECTIONS', '50'))
+    HTTP_MAX_KEEPALIVE = int(os.getenv('HTTP_MAX_KEEPALIVE', '20'))
+    HTTP_KEEPALIVE_EXPIRY = float(os.getenv('HTTP_KEEPALIVE_EXPIRY', '30.0'))
+
+    # ERP API settings
+    ERP_API_BASE = os.getenv('ERP_API_BASE', 'https://Vintech-CZ.on.plex.com/api/datasources/')
+    PLEX_USERNAME = os.getenv('PLEX_USERNAME', 'VintechCZWS@plex.com')
+    PLEX_PASSWORD = os.getenv('PLEX_PASSWORD')
+
+    # Cleanup settings
+    CLEANUP_INTERVAL_MINUTES = int(os.getenv('CLEANUP_INTERVAL_MINUTES', '1'))
+    CLEANUP_SAFETY_LIMIT = int(os.getenv('CLEANUP_SAFETY_LIMIT', '10'))
+    HISTORY_RETENTION_DAYS = int(os.getenv('HISTORY_RETENTION_DAYS', '30'))
+
+    # Logging settings
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+    LOG_FILE = os.getenv('LOG_FILE', 'app.log')
+
+    @classmethod
+    def validate_config(cls):
+        """Validate critical configuration values"""
+        if not cls.PLEX_PASSWORD:
+            logger.warning("PLEX_PASSWORD environment variable not set. Using fallback password.")
+            # Temporarily use the original password for testing
+            cls.PLEX_PASSWORD = "09c11ed-40b3-4"
+
+        if cls.DB_POOL_MAX_SIZE < cls.DB_POOL_MIN_SIZE:
+            logger.error("DB_POOL_MAX_SIZE must be >= DB_POOL_MIN_SIZE")
+            raise ValueError("Invalid database pool configuration")
+
+        logger.info(f"✅ Configuration validated - ERP: {cls.ERP_API_BASE}")
+        logger.info(f"✅ Authentication configured - Username: {cls.PLEX_USERNAME}")
+
+# Initialize and validate configuration
+AppConfig.validate_config()
+
+# Legacy variables for backward compatibility
+ERP_API_BASE = AppConfig.ERP_API_BASE
+plex_username = AppConfig.PLEX_USERNAME
+plex_password = AppConfig.PLEX_PASSWORD or ""
 
 credentials = f"{plex_username}:{plex_password}"
 bytes = credentials.encode('utf-8')
@@ -466,7 +547,9 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
         print(f"[get_containers_by_part_no] Response status: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"[get_containers_by_part_no] HTTP error: {response.status_code}")
+            print(f"[get_containers_by_part_no] HTTP error: {response.status_code} - {response.text}")
+            if response.status_code == 419:
+                print(f"[get_containers_by_part_no] Authentication failed - check PLEX credentials")
             return []
             
     except httpx.TimeoutException:
@@ -656,7 +739,11 @@ async def get_prod_locations() -> List[str]:
         response = await client.post(url, headers=headers, json=payload)
         
         if response.status_code != 200:
-            logger.error(f"❌ Production locations HTTP error: {response.status_code}")
+            logger.error(f"❌ Production locations HTTP error: {response.status_code} - {response.text}")
+            if response.status_code == 419:
+                logger.error(f"❌ Authentication failed - check PLEX credentials")
+                logger.error(f"Using username: {plex_username}")
+                logger.error(f"Password set: {'Yes' if plex_password else 'No'}")
             return []
             
         response_data = response.json()
@@ -774,15 +861,18 @@ async def automated_container_cleanup():
             logger.error(f"🚨 CRITICAL: No production locations found! Aborting cleanup.")
             return
                 
-        # Get all active requests from database
-        with AzureSQLConnection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time 
-                FROM REQUESTS 
+        # Get all active requests from database (async)
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            await cursor.execute("""
+                SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time
+                FROM REQUESTS
                 ORDER BY req_time DESC
             """)
-            active_requests = cursor.fetchall()
+            active_requests = await cursor.fetchall()
+        finally:
+            await release_db_connection(conn)
             
         logger.info(f"📊 Found {len(active_requests)} active requests to check")
         
@@ -947,17 +1037,20 @@ async def manual_container_cleanup():
                 'removed_containers': 0
             }
         
-        # Get active requests
+        # Get active requests (async)
         try:
             logger.info("🗄️ Fetching active requests from database...")
-            with AzureSQLConnection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time 
-                    FROM REQUESTS 
+            conn = await get_db_connection()
+            try:
+                cursor = await conn.cursor()
+                await cursor.execute("""
+                    SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time
+                    FROM REQUESTS
                     ORDER BY req_time DESC
                 """)
-                active_requests = cursor.fetchall()
+                active_requests = await cursor.fetchall()
+            finally:
+                await release_db_connection(conn)
                 
             results['checked_requests'] = len(active_requests)
             logger.info(f"📊 Found {len(active_requests)} active requests to check")
@@ -1001,11 +1094,12 @@ async def manual_container_cleanup():
             
             await asyncio.sleep(0.5)  # Shorter delay for manual testing
         print("------ containers_to_remove ------", containers_to_remove)
-        # Remove containers
+        # Remove containers (async)
         if containers_to_remove:
-            with AzureSQLConnection() as conn:
-                cursor = conn.cursor()
-                
+            conn = await get_db_connection()
+            try:
+                cursor = await conn.cursor()
+
                 for container in containers_to_remove:
                     try:
                         # Convert req_time back to datetime if it's a string
@@ -1015,9 +1109,9 @@ async def manual_container_cleanup():
                                 req_time_dt = datetime.fromisoformat(req_time_dt)
                             except:
                                 req_time_dt = datetime.now()  # Fallback
-                        
+
                         # Log to history before deleting
-                        history_logged = log_request_to_history(
+                        history_logged = await log_request_to_history(
                             req_id=container['req_id'],
                             serial_no=container['serial_no'],
                             part_no=container['part_no'],
@@ -1031,16 +1125,18 @@ async def manual_container_cleanup():
                         )
                         
                         if history_logged:
-                            cursor.execute("DELETE FROM REQUESTS WHERE req_id = ?", (container['req_id'],))
+                            await cursor.execute("DELETE FROM REQUESTS WHERE req_id = ?", (container['req_id'],))
                         else:
                             error_msg = f"Failed to log container {container['serial_no']} to history, skipping deletion"
                             results['errors'].append(error_msg)
-                            
+
                     except Exception as e:
                         error_msg = f"Error removing container {container['serial_no']}: {str(e)}"
                         results['errors'].append(error_msg)
-                
-                conn.commit()
+
+                await conn.commit()
+            finally:
+                await release_db_connection(conn)
         
         results['removed_containers'] = len(containers_to_remove)
         
