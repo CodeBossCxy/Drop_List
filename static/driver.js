@@ -12,11 +12,23 @@ function getBarcodeUrl(location) {
 function createRowElement(data) {
     const row = document.createElement("tr");
     row.classList.add("adding-row");
-    
+
+    // Check if this is a master unit (serial_no starts with "MU-")
+    const isMasterUnit = data.serial_no && data.serial_no.startsWith('MU-');
+    const displaySerial = isMasterUnit ?
+        `<strong style="color: #0066cc;">📦 Master Unit: ${data.master_unit_no || data.serial_no.substring(3)}</strong>` :
+        data.serial_no;
+
+    // Add special styling for master units
+    if (isMasterUnit) {
+        row.style.backgroundColor = '#e7f3ff';
+        row.style.borderLeft = '4px solid #0066cc';
+    }
+
     row.innerHTML = `
-        <td>${data.serial_no}</td>
+        <td>${displaySerial}</td>
         <td>${data.part_no}</td>
-        <td>${data.revision}</td>
+        <td>${data.revision || ''}</td>
         <td>${data.quantity}</td>
         <td>${data.location}</td>
         <td><img src="${getBarcodeUrl(data.location)}" alt="Barcode for ${data.location}" class="barcode-img"></td>
@@ -27,7 +39,7 @@ function createRowElement(data) {
             </button>
         </td>
     `;
-    
+
     return row;
 }
 

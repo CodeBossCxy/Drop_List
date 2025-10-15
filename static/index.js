@@ -763,73 +763,65 @@ async function requestWholeMasterUnit(masterUnit, containers) {
     console.log('\n🚀 REQUEST WHOLE MASTER UNIT CALLED');
     console.log('- masterUnit:', masterUnit);
     console.log('- containers:', containers);
-    
+
     // Get the workcenter value for validation
     const workcenter = document.getElementById('Workcenter-input').value;
     const revision = document.getElementById('shipper-number-input').value;
-    
+
     // Validation
     if (!workcenter) {
         console.log('❌ Validation failed: No workcenter entered');
         alert('Please enter a workcenter before requesting the master unit');
         return;
     }
-    
+
     // Filter out already requested containers
     const availableContainers = containers.filter(container => !container.isRequested);
-    
+
     if (availableContainers.length === 0) {
         console.log('❌ No available containers to request');
         alert('All containers in this master unit have already been requested');
         return;
     }
-    
+
     // Confirm the action
-    const confirmMessage = `Request all ${availableContainers.length} available containers from Master Unit ${masterUnit}?`;
+    const confirmMessage = `Request Master Unit ${masterUnit} with ${availableContainers.length} containers as a single unit?`;
     if (!confirm(confirmMessage)) {
         console.log('🚫 User cancelled master unit request');
         return;
     }
-    
-    console.log(`✅ Requesting ${availableContainers.length} containers from master unit ${masterUnit}`);
-    
-    let successCount = 0;
-    let failureCount = 0;
-    const errors = [];
-    
+
+    console.log(`✅ Requesting master unit ${masterUnit} as a single entity`);
+
     // Show progress indicator
     const originalButton = document.querySelector(`button[onclick*="requestWholeMasterUnit"]`);
     if (originalButton) {
         originalButton.disabled = true;
         originalButton.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Requesting...';
     }
-    
-    // Request each container sequentially to avoid overwhelming the server
-    for (const container of availableContainers) {
-        try {
-            console.log(`Requesting container: ${container.Serial_No}`);
-            
-            const requestBody = {
-                workcenter: workcenter,
-                revision: revision,
-                location: container.Location,
-                quantity: container.Quantity,
-                req_time: new Date().toISOString()
-            };
-            
-            const response = await fetch(`/part/${container.Part_No}/${container.Serial_No}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestBody)
-            });
-            
-            if (response.ok) {
-                successCount++;
-                console.log(`✅ Successfully requested container: ${container.Serial_No}`);
-                
-                // Update the UI to show this container as requested
+
+    try {
+        const requestBody = {
+            workcenter: workcenter,
+            revision: revision,
+            req_time: new Date().toISOString()
+        };
+
+        const response = await fetch(`/api/request-master-unit/${encodeURIComponent(masterUnit)}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.message === 'Success') {
+            console.log(`✅ Successfully requested master unit: ${masterUnit}`);
+
+            // Update the UI - mark all containers as requested
+            availableContainers.forEach(container => {
                 const row = document.getElementById(`row-${container.Serial_No}`);
                 if (row) {
                     const button = row.querySelector('button');
@@ -841,47 +833,33 @@ async function requestWholeMasterUnit(masterUnit, containers) {
                     row.style.textDecoration = 'line-through';
                     row.style.opacity = '0.6';
                 }
-            } else {
-                failureCount++;
-                const errorMsg = `Failed to request container ${container.Serial_No}: ${response.status}`;
-                console.error(`❌ ${errorMsg}`);
-                errors.push(errorMsg);
+            });
+
+            // Update the master unit button
+            if (originalButton) {
+                originalButton.innerHTML = '<i class="fas fa-check me-2"></i>Master Unit Requested';
+                originalButton.className = 'btn btn-secondary btn-lg';
             }
-            
-            // Small delay between requests to avoid overwhelming the server
-            await new Promise(resolve => setTimeout(resolve, 200));
-            
-        } catch (error) {
-            failureCount++;
-            const errorMsg = `Error requesting container ${container.Serial_No}: ${error.message}`;
-            console.error(`❌ ${errorMsg}`);
-            errors.push(errorMsg);
-        }
-    }
-    
-    // Reset button state
-    if (originalButton) {
-        if (successCount === availableContainers.length) {
-            originalButton.innerHTML = '<i class="fas fa-check me-2"></i>All Requested';
-            originalButton.className = 'btn btn-secondary btn-lg';
+
+            alert(`✅ Master Unit ${masterUnit} requested successfully!\n\n${result.containers_count} containers with total quantity: ${result.total_quantity}`);
+
         } else {
+            throw new Error(result.message || 'Failed to request master unit');
+        }
+
+    } catch (error) {
+        console.error('❌ Error requesting master unit:', error);
+
+        // Reset button state on error
+        if (originalButton) {
             originalButton.disabled = false;
             originalButton.innerHTML = '<i class="fas fa-check-circle me-2"></i>Request Whole Master Unit';
         }
+
+        alert(`❌ Failed to request master unit: ${error.message}`);
     }
-    
-    // Show result message
-    let message = `Master Unit ${masterUnit} request completed:\n`;
-    message += `✅ Successfully requested: ${successCount} containers\n`;
-    
-    if (failureCount > 0) {
-        message += `❌ Failed requests: ${failureCount} containers\n`;
-        message += `\nErrors:\n${errors.join('\n')}`;
-    }
-    
-    alert(message);
-    
-    console.log(`🏁 Master unit request complete: ${successCount} success, ${failureCount} failures`);
+
+    console.log(`🏁 Master unit request complete`);
 }
 
 // Function to handle request button click

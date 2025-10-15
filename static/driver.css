@@ -269,12 +269,30 @@ td, th {
         align-items: stretch;
         gap: 1rem;
     }
-    
+
     .position-fixed[style*="top:30px"] h3 {
         text-align: center;
     }
-    
+
     .position-fixed[style*="top:30px"] .d-flex.align-items-center.gap-3 {
         justify-content: center;
     }
+}
+
+/* Master Unit Row Styling */
+.master-unit-row {
+    background-color: #e7f3ff !important;
+    border-left: 4px solid #0066cc !important;
+}
+
+.master-unit-row:hover {
+    background-color: #d0e7ff !important;
+}
+
+.master-unit-indicator {
+    color: #0066cc;
+    font-weight: bold;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
 }

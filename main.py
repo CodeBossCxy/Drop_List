@@ -350,18 +350,31 @@ async def create_history_table():
             fulfillment_type NVARCHAR(50),
             current_location NVARCHAR(255)
         );
-        
+
         -- Create indexes for better performance
         CREATE INDEX IX_REQUESTS_HISTORY_serial_no ON REQUESTS_HISTORY(serial_no);
         CREATE INDEX IX_REQUESTS_HISTORY_part_no ON REQUESTS_HISTORY(part_no);
         CREATE INDEX IX_REQUESTS_HISTORY_req_time ON REQUESTS_HISTORY(req_time);
         CREATE INDEX IX_REQUESTS_HISTORY_fulfilled_time ON REQUESTS_HISTORY(fulfilled_time);
-        
+
         PRINT 'REQUESTS_HISTORY table and indexes created successfully.';
     END
     ELSE
     BEGIN
         PRINT 'REQUESTS_HISTORY table already exists.';
+    END
+
+    -- Add master_unit_no column if it doesn't exist (for both REQUESTS and REQUESTS_HISTORY)
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'REQUESTS' AND COLUMN_NAME = 'master_unit_no')
+    BEGIN
+        ALTER TABLE REQUESTS ADD master_unit_no NVARCHAR(255);
+        PRINT 'Added master_unit_no column to REQUESTS table.';
+    END
+
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'REQUESTS_HISTORY' AND COLUMN_NAME = 'master_unit_no')
+    BEGIN
+        ALTER TABLE REQUESTS_HISTORY ADD master_unit_no NVARCHAR(255);
+        PRINT 'Added master_unit_no column to REQUESTS_HISTORY table.';
     END
     """
     
@@ -1264,13 +1277,16 @@ async def request_serial_no(request: Request, part_no: str, serial_no: str):
         except:
             # Fallback to current UTC time if parsing fails
             req_time_utc = datetime.utcnow()
-            
+
         print(f"Original req_time: {req_time_str}, Stored as UTC: {req_time_utc}")
-        
+
+        # Get master_unit_no from data if present (optional field)
+        master_unit_no = data.get('master_unit_no', None)
+
         conn = await get_db_connection()
         try:
             cursor = await conn.cursor()
-            await cursor.execute("INSERT INTO REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (req_id, serial_no, part_no, data['revision'], data['quantity'], data['location'], data['workcenter'], req_time_utc))
+            await cursor.execute("INSERT INTO REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time, master_unit_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (req_id, serial_no, part_no, data['revision'], data['quantity'], data['location'], data['workcenter'], req_time_utc, master_unit_no))
             await conn.commit()
 
             if cursor.rowcount == 1:
@@ -1317,6 +1333,92 @@ async def get_master_unit_containers(request: Request, master_unit: str):
         error_response = {"containers": [], "error": str(e)}
         print(f"[get_master_unit_containers] Returning error response: {error_response}")
         return JSONResponse(content=error_response, status_code=500)
+
+@app.post("/api/request-master-unit/{master_unit}", response_class=JSONResponse)
+async def request_master_unit(request: Request, master_unit: str):
+    """
+    Request an entire master unit as a single entity
+    This creates ONE request entry that groups all containers
+    """
+    global req_id
+    try:
+        print(f"[request_master_unit] Processing master_unit: {master_unit}")
+        data = await request.json()
+        print(f"[request_master_unit] Request data: {data}")
+
+        # Get master unit key
+        master_unit_key = await master_unit_key_to_no(master_unit)
+        print(f"[request_master_unit] Master unit key: {master_unit_key}")
+
+        # Get all containers in the master unit
+        containers = await get_containers_by_master_unit(master_unit_key)
+        print(f"[request_master_unit] Found {len(containers)} containers")
+
+        if not containers:
+            return JSONResponse(content={"message": "No containers found in master unit"}, status_code=404)
+
+        # Filter out already requested containers
+        available_containers = [c for c in containers if not c.get('isRequested', False)]
+
+        if not available_containers:
+            return JSONResponse(content={"message": "All containers already requested"}, status_code=400)
+
+        # Parse req_time
+        req_time_str = data['req_time']
+        try:
+            req_time = datetime.fromisoformat(req_time_str.replace('Z', '+00:00'))
+            if req_time.tzinfo is not None:
+                req_time_utc = req_time.astimezone(pytz.UTC).replace(tzinfo=None)
+            else:
+                req_time_utc = req_time
+        except:
+            req_time_utc = datetime.utcnow()
+
+        # Calculate total quantity across all containers
+        total_quantity = sum(float(c.get('Quantity', 0)) for c in available_containers)
+
+        # Get first container's info for part_no and revision
+        first_container = available_containers[0]
+        part_no = first_container.get('Part_No', '')
+        revision = data.get('revision', '')
+
+        # Create a single "virtual" serial number for the master unit display
+        master_serial_no = f"MU-{master_unit}"
+
+        # Use first container's location, or combine multiple locations
+        locations = list(set([c.get('Location', '') for c in available_containers]))
+        location_str = ', '.join(locations) if len(locations) <= 3 else f"{locations[0]} (+{len(locations)-1} more)"
+
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+            # Insert single master unit request
+            await cursor.execute("""
+                INSERT INTO REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time, master_unit_no)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (req_id, master_serial_no, part_no, revision, total_quantity, location_str, data['workcenter'], req_time_utc, master_unit))
+            await conn.commit()
+
+            if cursor.rowcount == 1:
+                print(f"[request_master_unit] Master unit request inserted successfully with req_id: {req_id}")
+                req_id += 1
+                return JSONResponse(content={
+                    "message": "Success",
+                    "master_unit": master_unit,
+                    "containers_count": len(available_containers),
+                    "total_quantity": total_quantity
+                })
+            else:
+                print("[request_master_unit] Request insertion failed")
+                return JSONResponse(content={"message": "Error inserting request"}, status_code=500)
+        finally:
+            await release_db_connection(conn)
+
+    except Exception as e:
+        print(f"[request_master_unit] ERROR: {str(e)}")
+        import traceback
+        print(f"[request_master_unit] TRACEBACK: {traceback.format_exc()}")
+        return JSONResponse(content={"message": "Error", "error": str(e)}, status_code=500)
 
 
 @app.get("/requests", response_class=HTMLResponse)
