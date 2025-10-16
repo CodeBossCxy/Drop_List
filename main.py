@@ -695,44 +695,58 @@ async def get_containers_by_master_unit(master_unit_key: str) -> List[str]:
     return df.to_dict(orient="records")
 
 async def master_unit_key_to_no(master_unit_key: str) -> str:
-    print(f"[gmaster_unit_key_to_no] Starting search for master_unit: {master_unit_key}")
-    # You'll need to find the correct datasource ID for master unit search from Plex
-    # This is a placeholder - replace with actual Plex datasource ID for master unit lookup
-    containers_by_master_unit_id = 233972  # Replace with actual datasource ID
+    logger.info(f"[master_unit_key_to_no] Starting search for master_unit: {master_unit_key}")
+    # Datasource ID for master unit lookup from Plex
+    containers_by_master_unit_id = 233972
     url = f"{ERP_API_BASE}{containers_by_master_unit_id}/execute"
     payload = {
         "inputs": {
             "Master_Unit_No": master_unit_key
         }
     }
-    print(f"[master_unit_key_to_no] Making request to: {url}")
-    
+    logger.info(f"[master_unit_key_to_no] Making request to: {url}")
+    logger.info(f"[master_unit_key_to_no] Payload: {payload}")
+    logger.info(f"[master_unit_key_to_no] Using credentials: {plex_username} / {'*' * len(plex_password) if plex_password else 'NOT SET'}")
+
     try:
         client = await get_http_client()
         response = await client.post(url, headers=headers, json=payload)
-        print(f"[master_unit_key_to_no] Response status: {response.status_code}")
-        
+        logger.info(f"[master_unit_key_to_no] Response status: {response.status_code}")
+
+        if response.status_code == 419:
+            logger.error(f"[master_unit_key_to_no] Authentication failed (419) - Check PLEX credentials")
+            logger.error(f"[master_unit_key_to_no] Username: {plex_username}")
+            logger.error(f"[master_unit_key_to_no] Password set: {'Yes' if plex_password else 'No'}")
+            return None
+
         if response.status_code != 200:
-            print(f"[master_unit_key_to_no] HTTP error: {response.status_code}")
-            return []
-            
-    except httpx.TimeoutException:
-        print(f"[master_unit_key_to_no] Request timeout")
-        return []
+            logger.error(f"[master_unit_key_to_no] HTTP error: {response.status_code} - {response.text}")
+            return None
+
+    except httpx.TimeoutException as e:
+        logger.error(f"[master_unit_key_to_no] Request timeout: {e}")
+        return None
     except httpx.RequestError as e:
-        print(f"[master_unit_key_to_no] Request error: {e}")
-        return []
-    
+        logger.error(f"[master_unit_key_to_no] Request error: {e}")
+        return None
+
     try:
         response_data = response.json()
-        print(f"[master_unit_key_to_no] Successfully parsed JSON response")
+        logger.info(f"[master_unit_key_to_no] Successfully parsed JSON response")
+        logger.info(f"[master_unit_key_to_no] Response data: {response_data}")
     except (ValueError, json.JSONDecodeError) as e:
-        print(f"[master_unit_key_to_no] Failed to parse JSON response: {e}")
-        print(f"[master_unit_key_to_no] Response text: {response.text}")
-        return []
-    
-    print("-----response_data-----", response_data)
-    return response_data["outputs"]['Master_Unit_Key']
+        logger.error(f"[master_unit_key_to_no] Failed to parse JSON response: {e}")
+        logger.error(f"[master_unit_key_to_no] Response text: {response.text}")
+        return None
+
+    try:
+        master_unit_key_result = response_data["outputs"]['Master_Unit_Key']
+        logger.info(f"[master_unit_key_to_no] Successfully extracted Master_Unit_Key: {master_unit_key_result}")
+        return master_unit_key_result
+    except (KeyError, TypeError) as e:
+        logger.error(f"[master_unit_key_to_no] Failed to extract Master_Unit_Key from response: {e}")
+        logger.error(f"[master_unit_key_to_no] Response structure: {response_data}")
+        return None
 
     
 
@@ -1318,20 +1332,38 @@ async def request_serial_no(request: Request, serial_no: str):
 @app.post("/api/master-unit/{master_unit}", response_class=JSONResponse)
 async def get_master_unit_containers(request: Request, master_unit: str):
     try:
-        print(f"[get_master_unit_containers] Processing master_unit: {master_unit}")
+        logger.info(f"[get_master_unit_containers] Processing master_unit: {master_unit}")
+
+        # Step 1: Convert master unit number to key
+        logger.info(f"[get_master_unit_containers] Step 1: Converting master_unit_no to master_unit_key")
         master_unit_key = await master_unit_key_to_no(master_unit)
-        print("-----master_unit_key-----", master_unit_key)
+        logger.info(f"[get_master_unit_containers] Master unit key received: {master_unit_key}")
+
+        if not master_unit_key:
+            logger.error(f"[get_master_unit_containers] ERROR: master_unit_key is empty or None")
+            return JSONResponse(content={
+                "containers": [],
+                "error": f"Could not find master unit key for {master_unit}. The master unit may not exist in the ERP system."
+            }, status_code=404)
+
+        # Step 2: Get containers by master unit key
+        logger.info(f"[get_master_unit_containers] Step 2: Fetching containers for master_unit_key: {master_unit_key}")
         containers = await get_containers_by_master_unit(master_unit_key)
-        print(f"[get_master_unit_containers] Found {len(containers)} containers")
+        logger.info(f"[get_master_unit_containers] Found {len(containers)} containers")
+
+        if not containers:
+            logger.warning(f"[get_master_unit_containers] WARNING: No containers found for master_unit_key: {master_unit_key}")
+
         result = {"containers": jsonable_encoder(containers)}
-        print(f"[get_master_unit_containers] Returning successful response")
+        logger.info(f"[get_master_unit_containers] Returning successful response with {len(containers)} containers")
         return JSONResponse(content=result)
+
     except Exception as e:
-        print(f"[get_master_unit_containers] ERROR: {str(e)}")
+        logger.error(f"[get_master_unit_containers] ERROR: {str(e)}")
         import traceback
-        print(f"[get_master_unit_containers] TRACEBACK: {traceback.format_exc()}")
-        error_response = {"containers": [], "error": str(e)}
-        print(f"[get_master_unit_containers] Returning error response: {error_response}")
+        logger.error(f"[get_master_unit_containers] TRACEBACK: {traceback.format_exc()}")
+        error_response = {"containers": [], "error": f"Internal error: {str(e)}"}
+        logger.error(f"[get_master_unit_containers] Returning error response: {error_response}")
         return JSONResponse(content=error_response, status_code=500)
 
 @app.post("/api/request-master-unit/{master_unit}", response_class=JSONResponse)
