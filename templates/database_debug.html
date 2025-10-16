@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Database Debug Tool</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding: 20px;
+        }
+        .card {
+            margin-bottom: 20px;
+        }
+        .status-ok {
+            color: green;
+            font-weight: bold;
+        }
+        .status-error {
+            color: red;
+            font-weight: bold;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Database Schema Debug Tool</h1>
+        <p class="text-muted">Use this page to check and fix the database schema on Azure</p>
+
+        <!-- Check Schema Section -->
+        <div class="card">
+            <div class="card-header">
+                <h5>Step 1: Check Database Schema</h5>
+            </div>
+            <div class="card-body">
+                <button class="btn btn-primary" onclick="checkSchema()">
+                    <i class="fas fa-search"></i> Check Schema
+                </button>
+                <div id="schema-result" class="mt-3"></div>
+            </div>
+        </div>
+
+        <!-- Migration Section -->
+        <div class="card">
+            <div class="card-header">
+                <h5>Step 2: Run Database Migration</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-warning">Only run this if Step 1 shows that master_unit_no column is missing</p>
+                <button class="btn btn-warning" onclick="runMigration()">
+                    <i class="fas fa-tools"></i> Run Migration
+                </button>
+                <div id="migration-result" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function checkSchema() {
+            const resultDiv = document.getElementById('schema-result');
+            resultDiv.innerHTML = '<div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>';
+
+            try {
+                const response = await fetch('/api/database/check-schema');
+                const data = await response.json();
+
+                let html = '<h6>Database Schema Status:</h6>';
+
+                // REQUESTS table
+                html += '<div class="mt-3">';
+                html += '<strong>REQUESTS Table:</strong><br>';
+                html += `Status: <span class="${data.requests_table.has_master_unit_no ? 'status-ok' : 'status-error'}">
+                    ${data.requests_table.has_master_unit_no ? '✅ Has master_unit_no column' : '❌ Missing master_unit_no column'}
+                </span><br>`;
+                html += `<small>Columns: ${data.requests_table.columns.join(', ')}</small>`;
+                html += '</div>';
+
+                // REQUESTS_HISTORY table
+                html += '<div class="mt-3">';
+                html += '<strong>REQUESTS_HISTORY Table:</strong><br>';
+                html += `Status: <span class="${data.requests_history_table.has_master_unit_no ? 'status-ok' : 'status-error'}">
+                    ${data.requests_history_table.has_master_unit_no ? '✅ Has master_unit_no column' : '❌ Missing master_unit_no column'}
+                </span><br>`;
+                html += `<small>Columns: ${data.requests_history_table.columns.join(', ')}</small>`;
+                html += '</div>';
+
+                // Overall status
+                const allGood = data.requests_table.has_master_unit_no && data.requests_history_table.has_master_unit_no;
+                html += '<div class="mt-3 alert ' + (allGood ? 'alert-success' : 'alert-warning') + '">';
+                if (allGood) {
+                    html += '<strong>✅ Database schema is up to date!</strong><br>';
+                    html += 'The master unit feature should work correctly.';
+                } else {
+                    html += '<strong>⚠️ Database schema needs migration!</strong><br>';
+                    html += 'Please run Step 2 to add the missing columns.';
+                }
+                html += '</div>';
+
+                resultDiv.innerHTML = html;
+
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="alert alert-danger">
+                    <strong>Error:</strong> ${error.message}
+                </div>`;
+            }
+        }
+
+        async function runMigration() {
+            const resultDiv = document.getElementById('migration-result');
+            resultDiv.innerHTML = '<div class="spinner-border" role="status"><span class="visually-hidden">Running migration...</span></div>';
+
+            try {
+                const response = await fetch('/api/database/migrate', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                let html = '<h6>Migration Result:</h6>';
+
+                if (data.status === 'success') {
+                    html += '<div class="alert alert-success">';
+                    html += '<strong>✅ Migration completed successfully!</strong><br>';
+                    html += `<ul>
+                        <li>REQUESTS table: ${data.requests_table_migrated ? '✅ Migrated' : '❌ Failed'}</li>
+                        <li>REQUESTS_HISTORY table: ${data.requests_history_table_migrated ? '✅ Migrated' : '❌ Failed'}</li>
+                    </ul>`;
+                    html += '<p class="mb-0">The master unit feature should now work correctly. Please test by requesting a master unit.</p>';
+                    html += '</div>';
+                } else {
+                    html += '<div class="alert alert-danger">';
+                    html += '<strong>❌ Migration failed or incomplete</strong><br>';
+                    html += `<p>${data.message}</p>`;
+                    if (data.traceback) {
+                        html += '<pre>' + data.traceback + '</pre>';
+                    }
+                    html += '</div>';
+                }
+
+                resultDiv.innerHTML = html;
+
+                // Automatically recheck schema after migration
+                setTimeout(checkSchema, 1000);
+
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="alert alert-danger">
+                    <strong>Error:</strong> ${error.message}
+                </div>`;
+            }
+        }
+
+        // Auto-check schema on page load
+        window.addEventListener('DOMContentLoaded', checkSchema);
+    </script>
+</body>
+</html>

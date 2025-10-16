@@ -1479,6 +1479,15 @@ async def get_history_view(request: Request):
         "request": request
     })
 
+@app.get("/database-debug", response_class=HTMLResponse)
+async def get_database_debug_view(request: Request):
+    """
+    Database debug tool for checking and fixing schema issues
+    """
+    return templates.TemplateResponse("database_debug.html", {
+        "request": request
+    })
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -2081,34 +2090,146 @@ async def clear_all_history():
         conn = await get_db_connection()
         try:
             cursor = await conn.cursor()
-            
+
             # Count records before deletion
             await cursor.execute("SELECT COUNT(*) FROM REQUESTS_HISTORY")
             row = await cursor.fetchone()
             count_before = row[0] if row else 0
-            
+
             if count_before == 0:
                 return JSONResponse(content={
                     'status': 'success',
                     'message': 'History was already empty',
                     'deleted_count': 0
                 })
-            
+
             # Delete all records
             await cursor.execute("DELETE FROM REQUESTS_HISTORY")
             deleted_count = cursor.rowcount
             await conn.commit()
-            
+
             logger.info(f"🗑️ Cleared all history: {deleted_count} records deleted")
         finally:
             await release_db_connection(conn)
-            
+
             return JSONResponse(content={
                 'status': 'success',
                 'message': f'Successfully deleted all history records',
                 'deleted_count': deleted_count
             })
-            
+
     except Exception as e:
         logger.error(f"❌ Error clearing history: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear history: {str(e)}")
+
+@app.get("/api/database/check-schema", response_class=JSONResponse)
+async def check_database_schema():
+    """
+    Check if the database has the master_unit_no column
+    This is useful for debugging deployment issues
+    """
+    try:
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+
+            # Check REQUESTS table
+            await cursor.execute("""
+                SELECT COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'REQUESTS'
+            """)
+            requests_columns = [row[0] for row in await cursor.fetchall()]
+
+            # Check REQUESTS_HISTORY table
+            await cursor.execute("""
+                SELECT COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'REQUESTS_HISTORY'
+            """)
+            history_columns = [row[0] for row in await cursor.fetchall()]
+
+            return JSONResponse(content={
+                'status': 'success',
+                'requests_table': {
+                    'exists': len(requests_columns) > 0,
+                    'columns': requests_columns,
+                    'has_master_unit_no': 'master_unit_no' in requests_columns
+                },
+                'requests_history_table': {
+                    'exists': len(history_columns) > 0,
+                    'columns': history_columns,
+                    'has_master_unit_no': 'master_unit_no' in history_columns
+                }
+            })
+        finally:
+            await release_db_connection(conn)
+
+    except Exception as e:
+        logger.error(f"❌ Error checking schema: {e}")
+        return JSONResponse(content={
+            'status': 'error',
+            'message': str(e)
+        }, status_code=500)
+
+@app.post("/api/database/migrate", response_class=JSONResponse)
+async def manual_database_migration():
+    """
+    Manually trigger database migration to add master_unit_no column
+    This is safe to run multiple times - it will only add the column if it doesn't exist
+    """
+    try:
+        logger.info("🔧 Manual database migration triggered")
+
+        # Run the migration
+        await create_history_table()
+
+        # Verify the migration
+        conn = await get_db_connection()
+        try:
+            cursor = await conn.cursor()
+
+            # Check if columns were added
+            await cursor.execute("""
+                SELECT COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'REQUESTS' AND COLUMN_NAME = 'master_unit_no'
+            """)
+            requests_has_column = len(await cursor.fetchall()) > 0
+
+            await cursor.execute("""
+                SELECT COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'REQUESTS_HISTORY' AND COLUMN_NAME = 'master_unit_no'
+            """)
+            history_has_column = len(await cursor.fetchall()) > 0
+
+            if requests_has_column and history_has_column:
+                logger.info("✅ Migration successful - both tables have master_unit_no column")
+                return JSONResponse(content={
+                    'status': 'success',
+                    'message': 'Database migration completed successfully',
+                    'requests_table_migrated': True,
+                    'requests_history_table_migrated': True
+                })
+            else:
+                logger.error("❌ Migration failed - columns not added")
+                return JSONResponse(content={
+                    'status': 'partial',
+                    'message': 'Migration ran but columns may not have been added',
+                    'requests_table_migrated': requests_has_column,
+                    'requests_history_table_migrated': history_has_column
+                }, status_code=500)
+
+        finally:
+            await release_db_connection(conn)
+
+    except Exception as e:
+        logger.error(f"❌ Error during migration: {e}")
+        import traceback
+        logger.error(f"📋 Traceback: {traceback.format_exc()}")
+        return JSONResponse(content={
+            'status': 'error',
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }, status_code=500)
