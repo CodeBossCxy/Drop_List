@@ -1,3 +1,10 @@
+// ============================================
+// VERSION: 20251016-master-unit-fix
+// This version uses the NEW /api/request-master-unit endpoint
+// ============================================
+console.log('📦 index.js loaded - Version: 20251016-master-unit-fix');
+console.log('✅ This version includes master unit as single entity fix');
+
 // Consolidated API request function for better efficiency and error handling
 async function apiRequest(url, options = {}) {
     const defaultOptions = {
