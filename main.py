@@ -331,11 +331,11 @@ class AzureSQLConnection:
 # --- Database Setup Functions ---
 
 async def create_history_table():
-    """Create REQUESTS_HISTORY table if it doesn't exist"""
+    """Create DROP_REQUESTS_HISTORY table if it doesn't exist"""
     create_table_sql = """
-    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'REQUESTS_HISTORY')
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'DROP_REQUESTS_HISTORY')
     BEGIN
-        CREATE TABLE REQUESTS_HISTORY (
+        CREATE TABLE DROP_REQUESTS_HISTORY (
             history_id INT IDENTITY(1,1) PRIMARY KEY,
             req_id INT,
             serial_no NVARCHAR(255),
@@ -352,29 +352,29 @@ async def create_history_table():
         );
 
         -- Create indexes for better performance
-        CREATE INDEX IX_REQUESTS_HISTORY_serial_no ON REQUESTS_HISTORY(serial_no);
-        CREATE INDEX IX_REQUESTS_HISTORY_part_no ON REQUESTS_HISTORY(part_no);
-        CREATE INDEX IX_REQUESTS_HISTORY_req_time ON REQUESTS_HISTORY(req_time);
-        CREATE INDEX IX_REQUESTS_HISTORY_fulfilled_time ON REQUESTS_HISTORY(fulfilled_time);
+        CREATE INDEX IX_DROP_REQUESTS_HISTORY_serial_no ON DROP_REQUESTS_HISTORY(serial_no);
+        CREATE INDEX IX_DROP_REQUESTS_HISTORY_part_no ON DROP_REQUESTS_HISTORY(part_no);
+        CREATE INDEX IX_DROP_REQUESTS_HISTORY_req_time ON DROP_REQUESTS_HISTORY(req_time);
+        CREATE INDEX IX_DROP_REQUESTS_HISTORY_fulfilled_time ON DROP_REQUESTS_HISTORY(fulfilled_time);
 
-        PRINT 'REQUESTS_HISTORY table and indexes created successfully.';
+        PRINT 'DROP_REQUESTS_HISTORY table and indexes created successfully.';
     END
     ELSE
     BEGIN
-        PRINT 'REQUESTS_HISTORY table already exists.';
+        PRINT 'DROP_REQUESTS_HISTORY table already exists.';
     END
 
-    -- Add master_unit_no column if it doesn't exist (for both REQUESTS and REQUESTS_HISTORY)
-    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'REQUESTS' AND COLUMN_NAME = 'master_unit_no')
+    -- Add master_unit_no column if it doesn't exist (for both DROP_REQUESTS and DROP_REQUESTS_HISTORY)
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'DROP_REQUESTS' AND COLUMN_NAME = 'master_unit_no')
     BEGIN
-        ALTER TABLE REQUESTS ADD master_unit_no NVARCHAR(255);
-        PRINT 'Added master_unit_no column to REQUESTS table.';
+        ALTER TABLE DROP_REQUESTS ADD master_unit_no NVARCHAR(255);
+        PRINT 'Added master_unit_no column to DROP_REQUESTS table.';
     END
 
-    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'REQUESTS_HISTORY' AND COLUMN_NAME = 'master_unit_no')
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'DROP_REQUESTS_HISTORY' AND COLUMN_NAME = 'master_unit_no')
     BEGIN
-        ALTER TABLE REQUESTS_HISTORY ADD master_unit_no NVARCHAR(255);
-        PRINT 'Added master_unit_no column to REQUESTS_HISTORY table.';
+        ALTER TABLE DROP_REQUESTS_HISTORY ADD master_unit_no NVARCHAR(255);
+        PRINT 'Added master_unit_no column to DROP_REQUESTS_HISTORY table.';
     END
     """
     
@@ -384,11 +384,11 @@ async def create_history_table():
             cursor = await conn.cursor()
             await cursor.execute(create_table_sql)
             await conn.commit()
-            logger.info("✅ REQUESTS_HISTORY table setup completed")
+            logger.info("✅ DROP_REQUESTS_HISTORY table setup completed")
         finally:
             await release_db_connection(conn)
     except Exception as e:
-        logger.error(f"❌ Error creating REQUESTS_HISTORY table: {e}")
+        logger.error(f"❌ Error creating DROP_REQUESTS_HISTORY table: {e}")
 
 # Global HTTP client for async requests
 http_client = None
@@ -597,7 +597,7 @@ async def get_containers_by_part_no(part_no: str) -> List[str]:
         conn = await get_db_connection()
         try:
             cursor = await conn.cursor()
-            await cursor.execute("SELECT serial_no FROM REQUESTS")
+            await cursor.execute("SELECT serial_no FROM DROP_REQUESTS")
             rows = await cursor.fetchall()
             existing_serials = {row[0] for row in rows}
             
@@ -672,7 +672,7 @@ async def get_containers_by_master_unit(master_unit_key: str) -> List[str]:
         conn = await get_db_connection()
         try:
             cursor = await conn.cursor()
-            await cursor.execute("SELECT serial_no FROM REQUESTS")
+            await cursor.execute("SELECT serial_no FROM DROP_REQUESTS")
             rows = await cursor.fetchall()
             existing_serials = {row[0] for row in rows}
             
@@ -835,8 +835,8 @@ async def log_request_to_history(req_id: int, serial_no: str, part_no: str, revi
         try:
             cursor = await conn.cursor()
             await cursor.execute("""
-                INSERT INTO REQUESTS_HISTORY 
-                (req_id, serial_no, part_no, revision, quantity, location, deliver_to, 
+                INSERT INTO DROP_REQUESTS_HISTORY
+                (req_id, serial_no, part_no, revision, quantity, location, deliver_to,
                  req_time, fulfilled_time, fulfillment_duration_minutes, fulfillment_type, current_location)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (req_id, serial_no, part_no, revision, quantity, location, deliver_to,
@@ -894,7 +894,7 @@ async def automated_container_cleanup():
             cursor = await conn.cursor()
             await cursor.execute("""
                 SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time
-                FROM REQUESTS
+                FROM DROP_REQUESTS
                 ORDER BY req_time DESC
             """)
             active_requests = await cursor.fetchall()
@@ -982,8 +982,8 @@ async def automated_container_cleanup():
                         )
                         
                         if history_logged:
-                            # Only delete from REQUESTS if history logging succeeded
-                            await cursor.execute("DELETE FROM REQUESTS WHERE req_id = ?", (container['req_id'],))
+                            # Only delete from DROP_REQUESTS if history logging succeeded
+                            await cursor.execute("DELETE FROM DROP_REQUESTS WHERE req_id = ?", (container['req_id'],))
                             successful_deletions += 1
                             
                             logger.warning(f"✅ DELETED: Container {container_serial} (moved to {container['current_location']})")
@@ -1072,7 +1072,7 @@ async def manual_container_cleanup():
                 cursor = await conn.cursor()
                 await cursor.execute("""
                     SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time
-                    FROM REQUESTS
+                    FROM DROP_REQUESTS
                     ORDER BY req_time DESC
                 """)
                 active_requests = await cursor.fetchall()
@@ -1152,7 +1152,7 @@ async def manual_container_cleanup():
                         )
                         
                         if history_logged:
-                            await cursor.execute("DELETE FROM REQUESTS WHERE req_id = ?", (container['req_id'],))
+                            await cursor.execute("DELETE FROM DROP_REQUESTS WHERE req_id = ?", (container['req_id'],))
                         else:
                             error_msg = f"Failed to log container {container['serial_no']} to history, skipping deletion"
                             results['errors'].append(error_msg)
@@ -1192,27 +1192,27 @@ async def automated_history_cleanup():
             
             # Count records that will be deleted
             await cursor.execute("""
-                SELECT COUNT(*) 
-                FROM REQUESTS_HISTORY 
+                SELECT COUNT(*)
+                FROM DROP_REQUESTS_HISTORY
                 WHERE fulfilled_time < DATEADD(day, -30, GETDATE())
             """)
             row = await cursor.fetchone()
             records_to_delete = row[0] if row else 0
-            
+
             if records_to_delete > 0:
                 # Delete records older than 30 days
                 await cursor.execute("""
-                    DELETE FROM REQUESTS_HISTORY 
+                    DELETE FROM DROP_REQUESTS_HISTORY
                     WHERE fulfilled_time < DATEADD(day, -30, GETDATE())
                 """)
                 await conn.commit()
-                
+
                 logger.info(f"✅ Cleaned up {records_to_delete} old history records (>30 days)")
             else:
                 logger.info("✅ No old history records to clean up")
-                
+
             # Get current statistics after cleanup
-            await cursor.execute("SELECT COUNT(*) FROM REQUESTS_HISTORY")
+            await cursor.execute("SELECT COUNT(*) FROM DROP_REQUESTS_HISTORY")
             row = await cursor.fetchone()
             remaining_records = row[0] if row else 0
             logger.info(f"📊 History table now contains {remaining_records} records")
@@ -1300,7 +1300,7 @@ async def request_serial_no(request: Request, part_no: str, serial_no: str):
         conn = await get_db_connection()
         try:
             cursor = await conn.cursor()
-            await cursor.execute("INSERT INTO REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time, master_unit_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (req_id, serial_no, part_no, data['revision'], data['quantity'], data['location'], data['workcenter'], req_time_utc, master_unit_no))
+            await cursor.execute("INSERT INTO DROP_REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time, master_unit_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (req_id, serial_no, part_no, data['revision'], data['quantity'], data['location'], data['workcenter'], req_time_utc, master_unit_no))
             await conn.commit()
 
             if cursor.rowcount == 1:
@@ -1426,7 +1426,7 @@ async def request_master_unit(request: Request, master_unit: str):
             cursor = await conn.cursor()
             # Insert single master unit request
             await cursor.execute("""
-                INSERT INTO REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time, master_unit_no)
+                INSERT INTO DROP_REQUESTS (req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time, master_unit_no)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (req_id, master_serial_no, part_no, revision, total_quantity, location_str, data['workcenter'], req_time_utc, master_unit))
             await conn.commit()
@@ -1531,7 +1531,7 @@ async def get_all_requests():
             print("Executing SQL query...")
             await cursor.execute("""
                 SELECT *
-                FROM REQUESTS 
+                FROM DROP_REQUESTS
                 ORDER BY req_time DESC
             """)
             print("Query executed successfully")
@@ -1573,8 +1573,8 @@ async def delete_request(serial_no: str):
             
             # First, get the request data before deleting for history logging
             await cursor.execute("""
-                SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time 
-                FROM REQUESTS 
+                SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time
+                FROM DROP_REQUESTS
                 WHERE serial_no = ?
             """, (serial_no,))
             request_data = await cursor.fetchone()
@@ -1601,9 +1601,9 @@ async def delete_request(serial_no: str):
             
             if not history_logged:
                 logger.warning(f"⚠️ Failed to log request {serial_no} to history, but proceeding with deletion")
-            
-            # Delete from REQUESTS table
-            await cursor.execute("DELETE FROM REQUESTS WHERE serial_no = ?", (serial_no,))
+
+            # Delete from DROP_REQUESTS table
+            await cursor.execute("DELETE FROM DROP_REQUESTS WHERE serial_no = ?", (serial_no,))
             await conn.commit()
             
             logger.info(f"🗑️ Manual delete: Request {serial_no} removed by user")
@@ -1679,7 +1679,7 @@ async def get_cleanup_status():
         conn = await get_db_connection()
         try:
             cursor = await conn.cursor()
-            await cursor.execute("SELECT COUNT(*) FROM REQUESTS")
+            await cursor.execute("SELECT COUNT(*) FROM DROP_REQUESTS")
             row = await cursor.fetchone()
             active_requests_count = row[0] if row else 0
         finally:
@@ -1709,10 +1709,10 @@ async def get_cleanup_logs():
         try:
             cursor = await conn.cursor()
             await cursor.execute("""
-                SELECT COUNT(*) as total_requests, 
+                SELECT COUNT(*) as total_requests,
                        MIN(req_time) as oldest_request,
                        MAX(req_time) as newest_request
-                FROM REQUESTS
+                FROM DROP_REQUESTS
             """)
             stats = await cursor.fetchone()
         finally:
@@ -1793,19 +1793,19 @@ async def get_history(
         conn = await get_db_connection()
         try:
             cursor = await conn.cursor()
-            
+
             # Get total count for pagination info
-            count_sql = f"SELECT COUNT(*) FROM REQUESTS_HISTORY WHERE {where_clause}"
+            count_sql = f"SELECT COUNT(*) FROM DROP_REQUESTS_HISTORY WHERE {where_clause}"
             await cursor.execute(count_sql, params)
             row = await cursor.fetchone()
             total_count = row[0] if row else 0
-            
+
             # Get paginated results
             data_sql = f"""
-                SELECT history_id, req_id, serial_no, part_no, revision, quantity, 
-                       location, deliver_to, req_time, fulfilled_time, 
+                SELECT history_id, req_id, serial_no, part_no, revision, quantity,
+                       location, deliver_to, req_time, fulfilled_time,
                        fulfillment_duration_minutes, fulfillment_type, current_location
-                FROM REQUESTS_HISTORY 
+                FROM DROP_REQUESTS_HISTORY
                 WHERE {where_clause}
                 ORDER BY fulfilled_time DESC
                 OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
@@ -1891,7 +1891,7 @@ async def get_history_stats(
             
             # Overall statistics (exclude manual_delete from performance calculations)
             await cursor.execute(f"""
-                SELECT 
+                SELECT
                     COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) as total_fulfilled,
                     AVG(CASE WHEN fulfillment_type != 'manual_delete' THEN CAST(fulfillment_duration_minutes AS FLOAT) END) as avg_fulfillment_minutes,
                     MIN(CASE WHEN fulfillment_type != 'manual_delete' THEN fulfillment_duration_minutes END) as min_fulfillment_minutes,
@@ -1899,20 +1899,20 @@ async def get_history_stats(
                     COUNT(CASE WHEN fulfillment_type = 'auto_cleanup' THEN 1 END) as auto_fulfilled,
                     COUNT(CASE WHEN fulfillment_type = 'manual_cleanup' THEN 1 END) as manual_cleanup,
                     COUNT(CASE WHEN fulfillment_type = 'manual_delete' THEN 1 END) as manual_delete
-                FROM REQUESTS_HISTORY
+                FROM DROP_REQUESTS_HISTORY
                 WHERE {where_clause}
             """, params)
             overall_stats = await cursor.fetchone()
             
             # Statistics by part number (exclude manual_delete from performance calculations)
             await cursor.execute(f"""
-                SELECT 
+                SELECT
                     part_no,
                     COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) as fulfilled_count,
                     AVG(CASE WHEN fulfillment_type != 'manual_delete' THEN CAST(fulfillment_duration_minutes AS FLOAT) END) as avg_fulfillment_minutes,
                     MIN(CASE WHEN fulfillment_type != 'manual_delete' THEN fulfillment_duration_minutes END) as min_fulfillment_minutes,
                     MAX(CASE WHEN fulfillment_type != 'manual_delete' THEN fulfillment_duration_minutes END) as max_fulfillment_minutes
-                FROM REQUESTS_HISTORY
+                FROM DROP_REQUESTS_HISTORY
                 WHERE {where_clause}
                 GROUP BY part_no
                 HAVING COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) > 0
@@ -1923,11 +1923,11 @@ async def get_history_stats(
             # Daily fulfillment trend (last 7 days for performance, exclude manual_delete)
             trend_days = min(days, 7)
             await cursor.execute(f"""
-                SELECT 
+                SELECT
                     CAST(fulfilled_time AS DATE) as fulfillment_date,
                     COUNT(CASE WHEN fulfillment_type != 'manual_delete' THEN 1 END) as fulfilled_count,
                     AVG(CASE WHEN fulfillment_type != 'manual_delete' THEN CAST(fulfillment_duration_minutes AS FLOAT) END) as avg_duration
-                FROM REQUESTS_HISTORY
+                FROM DROP_REQUESTS_HISTORY
                 WHERE fulfilled_time >= DATEADD(day, -{trend_days}, GETDATE()) AND deliver_to != 'TEST'
                 {(" AND " + " AND ".join(where_clauses[2:])) if len(where_clauses) > 2 else ""}
                 GROUP BY CAST(fulfilled_time AS DATE)
@@ -1938,8 +1938,8 @@ async def get_history_stats(
             
             # Performance categories (fast, medium, slow, exclude manual_delete)
             await cursor.execute(f"""
-                SELECT 
-                    CASE 
+                SELECT
+                    CASE
                         WHEN fulfillment_duration_minutes <= 60 THEN 'Fast (≤1 hour)'
                         WHEN fulfillment_duration_minutes <= 480 THEN 'Medium (1-8 hours)'
                         WHEN fulfillment_duration_minutes <= 1440 THEN 'Slow (8-24 hours)'
@@ -1947,10 +1947,10 @@ async def get_history_stats(
                     END as performance_category,
                     COUNT(*) as count,
                     AVG(CAST(fulfillment_duration_minutes AS FLOAT)) as avg_minutes
-                FROM REQUESTS_HISTORY
+                FROM DROP_REQUESTS_HISTORY
                 WHERE {where_clause} AND fulfillment_type != 'manual_delete'
-                GROUP BY 
-                    CASE 
+                GROUP BY
+                    CASE
                         WHEN fulfillment_duration_minutes <= 60 THEN 'Fast (≤1 hour)'
                         WHEN fulfillment_duration_minutes <= 480 THEN 'Medium (1-8 hours)'
                         WHEN fulfillment_duration_minutes <= 1440 THEN 'Slow (8-24 hours)'
@@ -1963,7 +1963,7 @@ async def get_history_stats(
             # Get all history records for shift analysis (exclude manual_delete)
             await cursor.execute(f"""
                 SELECT fulfilled_time, fulfillment_duration_minutes, fulfillment_type
-                FROM REQUESTS_HISTORY
+                FROM DROP_REQUESTS_HISTORY
                 WHERE {where_clause} AND fulfillment_type != 'manual_delete'
             """, params)
             shift_raw_data = await cursor.fetchall()
@@ -2092,7 +2092,7 @@ async def clear_all_history():
             cursor = await conn.cursor()
 
             # Count records before deletion
-            await cursor.execute("SELECT COUNT(*) FROM REQUESTS_HISTORY")
+            await cursor.execute("SELECT COUNT(*) FROM DROP_REQUESTS_HISTORY")
             row = await cursor.fetchone()
             count_before = row[0] if row else 0
 
@@ -2104,7 +2104,7 @@ async def clear_all_history():
                 })
 
             # Delete all records
-            await cursor.execute("DELETE FROM REQUESTS_HISTORY")
+            await cursor.execute("DELETE FROM DROP_REQUESTS_HISTORY")
             deleted_count = cursor.rowcount
             await conn.commit()
 
@@ -2133,30 +2133,30 @@ async def check_database_schema():
         try:
             cursor = await conn.cursor()
 
-            # Check REQUESTS table
+            # Check DROP_REQUESTS table
             await cursor.execute("""
                 SELECT COLUMN_NAME
                 FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = 'REQUESTS'
+                WHERE TABLE_NAME = 'DROP_REQUESTS'
             """)
             requests_columns = [row[0] for row in await cursor.fetchall()]
 
-            # Check REQUESTS_HISTORY table
+            # Check DROP_REQUESTS_HISTORY table
             await cursor.execute("""
                 SELECT COLUMN_NAME
                 FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = 'REQUESTS_HISTORY'
+                WHERE TABLE_NAME = 'DROP_REQUESTS_HISTORY'
             """)
             history_columns = [row[0] for row in await cursor.fetchall()]
 
             return JSONResponse(content={
                 'status': 'success',
-                'requests_table': {
+                'drop_requests_table': {
                     'exists': len(requests_columns) > 0,
                     'columns': requests_columns,
                     'has_master_unit_no': 'master_unit_no' in requests_columns
                 },
-                'requests_history_table': {
+                'drop_requests_history_table': {
                     'exists': len(history_columns) > 0,
                     'columns': history_columns,
                     'has_master_unit_no': 'master_unit_no' in history_columns
@@ -2193,14 +2193,14 @@ async def manual_database_migration():
             await cursor.execute("""
                 SELECT COLUMN_NAME
                 FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = 'REQUESTS' AND COLUMN_NAME = 'master_unit_no'
+                WHERE TABLE_NAME = 'DROP_REQUESTS' AND COLUMN_NAME = 'master_unit_no'
             """)
             requests_has_column = len(await cursor.fetchall()) > 0
 
             await cursor.execute("""
                 SELECT COLUMN_NAME
                 FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = 'REQUESTS_HISTORY' AND COLUMN_NAME = 'master_unit_no'
+                WHERE TABLE_NAME = 'DROP_REQUESTS_HISTORY' AND COLUMN_NAME = 'master_unit_no'
             """)
             history_has_column = len(await cursor.fetchall()) > 0
 
@@ -2209,16 +2209,16 @@ async def manual_database_migration():
                 return JSONResponse(content={
                     'status': 'success',
                     'message': 'Database migration completed successfully',
-                    'requests_table_migrated': True,
-                    'requests_history_table_migrated': True
+                    'drop_requests_table_migrated': True,
+                    'drop_requests_history_table_migrated': True
                 })
             else:
                 logger.error("❌ Migration failed - columns not added")
                 return JSONResponse(content={
                     'status': 'partial',
                     'message': 'Migration ran but columns may not have been added',
-                    'requests_table_migrated': requests_has_column,
-                    'requests_history_table_migrated': history_has_column
+                    'drop_requests_table_migrated': requests_has_column,
+                    'drop_requests_history_table_migrated': history_has_column
                 }, status_code=500)
 
         finally:

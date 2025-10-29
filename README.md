@@ -1,16 +1,16 @@
-# Pick List Application
+# Drop List Application
 
-A warehouse management system for tracking and managing inventory requests with real-time updates and ERP integration.
+A warehouse management system for tracking and managing container return requests from workcenters to the warehouse with real-time updates and ERP integration.
 
 ## Features
 
-- **Inventory Management**: Track containers by part number and serial number
+- **Container Return Management**: Track containers being returned from workcenters by serial number
 - **ERP Integration**: Seamless integration with Plex ERP system
-- **Real-time Updates**: WebSocket support for live request notifications
+- **Real-time Updates**: WebSocket support for live return request notifications
 - **Database Persistence**: Azure SQL Database for reliable data storage
-- **Web Interface**: User-friendly interface for warehouse operations
+- **Web Interface**: User-friendly interface for warehouse return operations
 - **REST API**: Complete API for programmatic access
-- **Location Filtering**: Filter containers by production storage locations
+- **Simplified Workflow**: Operators only need to specify serial number and master unit
 
 ## Technology Stack
 
@@ -33,7 +33,7 @@ A warehouse management system for tracking and managing inventory requests with 
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd Pick_List
+   cd "Drop List"
    ```
 
 2. **Install Python dependencies**
@@ -85,8 +85,8 @@ CREATE TABLE REQUESTS (
 
 3. **Using Docker**
    ```bash
-   docker build -t pick-list .
-   docker run -p 8000:8000 pick-list
+   docker build -t drop-list .
+   docker run -p 8000:8000 drop-list
    ```
 
 ## API Endpoints
@@ -108,7 +108,7 @@ CREATE TABLE REQUESTS (
 ## Project Structure
 
 ```
-Pick_List/
+Drop List/
 ├── main.py              # FastAPI application
 ├── requirements.txt     # Python dependencies
 ├── package.json        # Node.js dependencies
