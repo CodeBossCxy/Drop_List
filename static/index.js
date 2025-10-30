@@ -1,9 +1,10 @@
 // ============================================
-// VERSION: 20251016-master-unit-fix
-// This version uses the NEW /api/request-master-unit endpoint
+// VERSION: 20251029-enter-key-fix
+// This version fixes Enter key functionality for Drop List
+// Only includes Serial No and Master Unit inputs (no Part No)
 // ============================================
-console.log('📦 index.js loaded - Version: 20251016-master-unit-fix');
-console.log('✅ This version includes master unit as single entity fix');
+console.log('📦 index.js loaded - Version: 20251029-enter-key-fix');
+console.log('✅ Enter key functionality fixed for Serial No and Master Unit inputs');
 
 // Consolidated API request function for better efficiency and error handling
 async function apiRequest(url, options = {}) {
@@ -1026,15 +1027,14 @@ async function handleRequest(serialNo, partNo, button) {
 // Add event listeners to your inputs
 function setupEventListeners() {
     console.log('Setting up event listeners...');
-    
+
+    // Only include inputs that exist in Drop List HTML
     const inputs = [
-        'part-no-input',
-        'Workcenter-input', 
-        'shipper-number-input',
+        'Workcenter-input',
         'serial-no-input',
         'master-unit-input'
     ];
-    
+
     inputs.forEach(inputId => {
         const element = document.getElementById(inputId);
         if (element) {
@@ -1060,50 +1060,41 @@ async function enterKeyPressed(e) {
     console.log('\n🔥 ENTER KEY EVENT FIRED!');
     console.log('- Key pressed:', e.key);
     console.log('- Event target:', e.target.id);
-    
-    // Get current values
+
+    // Get current values (only for inputs that exist in Drop List)
     const serialNo = document.getElementById('serial-no-input').value;
-    const partNo = document.getElementById('part-no-input').value;
     const masterUnit = document.getElementById('master-unit-input').value;
     console.log('- Serial number value:', serialNo);
-    console.log('- Part number value:', partNo);
     console.log('- Master unit value:', masterUnit);
-    
+
     // Skip processing if Enter wasn't pressed
     if (e.key !== "Enter") {
         console.log('⏭️ Not Enter key, skipping');
         return;
     }
-    
+
     console.log("---------------------------------------------------------------------");
-    
+
     // Priority 1: If serial number exists, search by serial number (regardless of which field triggered)
     if (serialNo) {
         console.log('✅ Serial number exists - calling fetchContainerInfo');
         const data = await fetchContainerInfo(serialNo);
-        return; // Exit early - don't process part number or master unit
+        return; // Exit early - don't process master unit
     }
-    
+
     // Priority 2: If master unit exists, search by master unit (regardless of which field triggered)
     if (masterUnit) {
         console.log('✅ Master unit exists - calling fetchMasterUnitContainers');
         const data = await fetchMasterUnitContainers(masterUnit);
-        return; // Exit early - don't process part number
-    }
-    
-    // Priority 3: If part number exists (and no serial number or master unit), search by part number
-    if (partNo) {
-        console.log('✅ Part number exists - calling fetchContainers');
-        const data = await fetchContainers(partNo);
         return; // Exit early
     }
-    
-    // Priority 4: If none exist, show message (only if Enter was pressed in search-related fields)
-    const searchFields = ['part-no-input', 'serial-no-input', 'master-unit-input'];
+
+    // Priority 3: If none exist, show message (only if Enter was pressed in search-related fields)
+    const searchFields = ['serial-no-input', 'master-unit-input'];
     if (searchFields.includes(e.target.id)) {
-        console.log("❌ No part number, serial number, or master unit entered");
+        console.log("❌ No serial number or master unit entered");
         clearContainersTable();
-        displayMessage("Please enter a part number, serial number, or master unit");
+        displayMessage("Please enter a serial number or master unit");
     } else {
         console.log('⏭️ Enter pressed in non-search field, no action needed');
     }
