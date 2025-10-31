@@ -1,10 +1,10 @@
 // ============================================
-// VERSION: 20251029-enter-key-fix
-// This version fixes Enter key functionality for Drop List
-// Only includes Serial No and Master Unit inputs (no Part No)
+// VERSION: 20251029-2345-request-fix
+// This version fixes handleRequest to read revision from table row
+// instead of non-existent shipper-number-input field
 // ============================================
-console.log('📦 index.js loaded - Version: 20251029-enter-key-fix');
-console.log('✅ Enter key functionality fixed for Serial No and Master Unit inputs');
+console.log('📦 index.js loaded - Version: 20251029-2345-request-fix');
+console.log('✅ Request button now reads revision from table row');
 
 // Consolidated API request function for better efficiency and error handling
 async function apiRequest(url, options = {}) {
@@ -890,53 +890,61 @@ async function handleRequest(serialNo, partNo, button) {
     
     try {
         const workcenter = document.getElementById('Workcenter-input').value;
-        const revision = document.getElementById('shipper-number-input').value;
-        
+
         console.log('- workcenter:', workcenter);
-        console.log('- revision:', revision);
-        
+
         // VALIDATION FIRST - Don't change anything if validation fails
         if (!workcenter) {
             console.log('❌ Validation failed: No workcenter entered');
             alert('Please enter a workcenter');
             return; // Exit without changing button or row state
         }
-        
+
         console.log('✅ Validation passed - proceeding with request');
-        
+
         // NOW that validation passed, update button and row state
         button.disabled = true;
         button.textContent = 'Requested';
         button.className = 'btn btn-secondary btn-sm';
-        
+
         // Add strikethrough to the row
         row.style.textDecoration = 'line-through';
         row.style.opacity = '0.6';
         console.log('- button and row styling applied after validation');
-        
-        // SAFE CELL SELECTION WITH DEBUGGING
+
+        // SAFE CELL SELECTION WITH DEBUGGING - Read from table row
+        let revision = '';
         let location = '';
         let quantity = '';
-        
+
         if (row) {
-            const locationCell = row.querySelector('td:nth-child(5)');
-            const quantityCell = row.querySelector('td:nth-child(4)');
-            
-            console.log('- locationCell found:', !!locationCell);
+            const revisionCell = row.querySelector('td:nth-child(3)');  // Revision column
+            const quantityCell = row.querySelector('td:nth-child(4)');  // Quantity column
+            const locationCell = row.querySelector('td:nth-child(5)');  // Location column
+
+            console.log('- revisionCell found:', !!revisionCell);
             console.log('- quantityCell found:', !!quantityCell);
-            
-            if (locationCell) {
-                location = locationCell.textContent;
-                console.log('- location:', location);
+            console.log('- locationCell found:', !!locationCell);
+
+            if (revisionCell) {
+                revision = revisionCell.textContent;
+                console.log('- revision:', revision);
             } else {
-                console.error('❌ Location cell not found!');
+                console.error('❌ Revision cell not found!');
             }
-            
+
             if (quantityCell) {
                 quantity = quantityCell.textContent;
                 console.log('- quantity:', quantity);
             } else {
                 console.error('❌ Quantity cell not found!');
+            }
+
+            if (locationCell) {
+                location = locationCell.textContent;
+                console.log('- location:', location);
+            } else {
+                console.error('❌ Location cell not found!');
             }
         }
         
