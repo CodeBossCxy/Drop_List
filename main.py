@@ -130,7 +130,8 @@ def get_shift_from_czech_datetime(dt):
         return 'Night'
 
 # Initialize scheduler
-scheduler = AsyncIOScheduler()
+# COMMENTED OUT - Auto cleanup disabled
+# scheduler = AsyncIOScheduler()
 
 # Scheduler lifecycle management
 @app.on_event("startup")
@@ -155,51 +156,55 @@ async def startup_event():
         
     except Exception as e:
         logger.error(f"Database connection error during startup: {e}")
-    
-    logger.info("🚀 Starting automated cleanup scheduler...")
-    
-    # Add the cleanup job to run every minute for faster response
-    scheduler.add_job(
-        func=automated_container_cleanup,
-        trigger=IntervalTrigger(minutes=1),  # Every minute for faster cleanup
-        id='container_cleanup',
-        name='Automated Container Cleanup',
-        replace_existing=True,
-        max_instances=1  # Prevent overlapping runs
-    )
-    
-    # Add the history cleanup job to run daily at 2 AM
-    scheduler.add_job(
-        func=automated_history_cleanup,
-        trigger='cron',
-        hour=2,
-        minute=0,
-        id='history_cleanup',
-        name='Automated History Cleanup (30+ days)',
-        replace_existing=True,
-        max_instances=1
-    )
-    
-    scheduler.start()
-    logger.info("✅ Scheduler started successfully (container cleanup: 1min, history cleanup: daily)")
-    
-    # Run initial cleanup after 5 minutes (increased delay to allow app to fully start)
-    scheduler.add_job(
-        func=automated_container_cleanup,
-        trigger='date',
-        run_date=datetime.now() + timedelta(minutes=5),
-        id='initial_cleanup',
-        name='Initial Container Cleanup'
-    )
+
+    # COMMENTED OUT - Auto cleanup disabled
+    # logger.info("🚀 Starting automated cleanup scheduler...")
+    #
+    # # Add the cleanup job to run every minute for faster response
+    # scheduler.add_job(
+    #     func=automated_container_cleanup,
+    #     trigger=IntervalTrigger(minutes=1),  # Every minute for faster cleanup
+    #     id='container_cleanup',
+    #     name='Automated Container Cleanup',
+    #     replace_existing=True,
+    #     max_instances=1  # Prevent overlapping runs
+    # )
+    #
+    # # Add the history cleanup job to run daily at 2 AM
+    # scheduler.add_job(
+    #     func=automated_history_cleanup,
+    #     trigger='cron',
+    #     hour=2,
+    #     minute=0,
+    #     id='history_cleanup',
+    #     name='Automated History Cleanup (30+ days)',
+    #     replace_existing=True,
+    #     max_instances=1
+    # )
+    #
+    # scheduler.start()
+    # logger.info("✅ Scheduler started successfully (container cleanup: 1min, history cleanup: daily)")
+    #
+    # # Run initial cleanup after 5 minutes (increased delay to allow app to fully start)
+    # scheduler.add_job(
+    #     func=automated_container_cleanup,
+    #     trigger='date',
+    #     run_date=datetime.now() + timedelta(minutes=5),
+    #     id='initial_cleanup',
+    #     name='Initial Container Cleanup'
+    # )
+
+    logger.info("✅ Application startup completed (auto cleanup disabled)")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Stop the scheduler and cleanup resources when the application shuts down"""
     logger.info("🛑 Shutting down application...")
-    
-    # Shutdown scheduler
-    scheduler.shutdown()
-    logger.info("✅ Scheduler shut down successfully")
+
+    # COMMENTED OUT - Auto cleanup disabled
+    # # Shutdown scheduler
+    # scheduler.shutdown()
+    # logger.info("✅ Scheduler shut down successfully")
     
     # Close HTTP client
     global http_client
@@ -874,161 +879,162 @@ async def check_container_current_location(serial_no: str) -> Optional[str]:
         logger.error(f"❌ Error checking location for container {serial_no}: {e}")
         return None
 
-async def automated_container_cleanup():
-    """
-    Main automated cleanup function that runs every minute
-    Checks if requested containers have moved to production locations and removes them
-    """
-    try:
-        logger.info(f"🧹 Starting automated container cleanup...")
-        
-        # Get production locations
-        prod_locations = await get_prod_locations()
-        if not prod_locations:
-            logger.error(f"🚨 CRITICAL: No production locations found! Aborting cleanup.")
-            return
-                
-        # Get all active requests from database (async)
-        conn = await get_db_connection()
-        try:
-            cursor = await conn.cursor()
-            await cursor.execute("""
-                SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time
-                FROM DROP_REQUESTS
-                ORDER BY req_time DESC
-            """)
-            active_requests = await cursor.fetchall()
-        finally:
-            await release_db_connection(conn)
-            
-        logger.info(f"📊 Found {len(active_requests)} active requests to check")
-        
-        containers_to_remove = []
-        
-        # Check each active request
-        for req_id, serial_no, part_no, revision, quantity, stored_location, deliver_to, req_time in active_requests:            
-            # Get current location from ERP
-            current_location = await check_container_current_location(serial_no)
-            
-            if current_location:
-                is_in_prod = current_location in prod_locations
-                
-                # CRITICAL DEBUG: Log the exact decision logic for suspicious containers
-                if serial_no == '3942299' or req_id == 3942299:
-                    logger.error(f"🔍 CRITICAL DEBUG for container {serial_no} (req_id: {req_id}):")
-                    logger.error(f"   Current Location: '{current_location}'")
-                    logger.error(f"   Is in Production List: {is_in_prod}")
-                    logger.error(f"   Production Locations: {prod_locations}")
-                    logger.error(f"   Deliver To: {deliver_to}")
-                    if is_in_prod:
-                        logger.error(f"   ❌ WILL BE DELETED")
-                    else:
-                        logger.error(f"   ✅ WILL BE KEPT")
-                
-                # Check if current location is in production locations
-                if is_in_prod:
-                    logger.warning(f"🎯 FLAGGED FOR DELETION: {serial_no} (current: {current_location})")
-                    
-                    containers_to_remove.append({
-                        'req_id': req_id,
-                        'serial_no': serial_no,
-                        'part_no': part_no,
-                        'revision': revision,
-                        'quantity': quantity,
-                        'stored_location': stored_location,
-                        'current_location': current_location,
-                        'deliver_to': deliver_to,
-                        'req_time': req_time
-                    })
-                else:
-                    logger.info(f"📍 KEEPING: {serial_no} (current: {current_location} not in production)")
-            else:
-                logger.warning(f"⚠️ KEEPING: {serial_no} (location unknown)")
-            
-            # Small delay to avoid overwhelming the ERP API
-            await asyncio.sleep(0.5)
-        
-        # Remove containers that are now in production locations
-        if containers_to_remove:
-            logger.warning(f"🗑️ PROCESSING {len(containers_to_remove)} CONTAINERS FOR DELETION!")
-            
-            # Safety check - don't delete if too many containers flagged
-            if len(containers_to_remove) > 10:
-                logger.error(f"🚨 SAFETY ABORT: Too many containers ({len(containers_to_remove)}) flagged for deletion!")
-                logger.error(f"🚨 This could indicate a system error. Aborting cleanup for safety.")
-                return
-            
-            conn = await get_db_connection()
-            try:
-                cursor = await conn.cursor()
-                successful_deletions = 0
-                
-                for container in containers_to_remove:
-                    container_serial = container['serial_no']
-                    
-                    try:
-                        # Log to history before deleting
-                        history_logged = await log_request_to_history(
-                            req_id=container['req_id'],
-                            serial_no=container['serial_no'],
-                            part_no=container['part_no'],
-                            revision=container['revision'] or '',
-                            quantity=float(container['quantity']) if container['quantity'] else 0.0,
-                            location=container['stored_location'],
-                            deliver_to=container['deliver_to'],
-                            req_time=container['req_time'],
-                            current_location=container['current_location'],
-                            fulfillment_type='auto_cleanup'
-                        )
-                        
-                        if history_logged:
-                            # Only delete from DROP_REQUESTS if history logging succeeded
-                            await cursor.execute("DELETE FROM DROP_REQUESTS WHERE req_id = ?", (container['req_id'],))
-                            successful_deletions += 1
-                            
-                            logger.warning(f"✅ DELETED: Container {container_serial} (moved to {container['current_location']})")
-                        else:
-                            logger.error(f"⚠️ SKIPPED: Container {container_serial} (history logging failed)")
-                            
-                    except Exception as e:
-                        logger.error(f"❌ ERROR: Failed to delete container {container_serial}: {e}")
-                
-                await conn.commit()
-                logger.info(f"✅ Deletion complete: {successful_deletions}/{len(containers_to_remove)} successful")
-                
-            finally:
-                await release_db_connection(conn)
-        else:
-            logger.info("✅ No containers need to be removed at this time")
-        
-        logger.info(f"🏁 Cleanup complete: Checked {len(active_requests)} requests, removed {len(containers_to_remove)} containers")
-        
-        # Send cleanup notification to all connected users
-        await send_cleanup_notification({
-            'type': 'auto_cleanup_complete',
-            'checked_requests': len(active_requests),
-            'removed_containers': len(containers_to_remove),
-            'containers_removed': [
-                {
-                    'serial_no': c['serial_no'],
-                    'current_location': c['current_location'],
-                    'deliver_to': c['deliver_to']
-                } for c in containers_to_remove
-            ] if containers_to_remove else [],
-            'timestamp': datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        logger.error(f"❌ CRITICAL ERROR in automated cleanup: {e}")
-        import traceback
-        logger.error(f"📋 Traceback: {traceback.format_exc()}")
-        
-        # Send error notification
-        await send_cleanup_notification({
-            'type': 'auto_cleanup_error',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        })
+# COMMENTED OUT - Auto cleanup disabled
+# async def automated_container_cleanup():
+#     """
+#     Main automated cleanup function that runs every minute
+#     Checks if requested containers have moved to production locations and removes them
+#     """
+#     try:
+#        logger.info(f"🧹 Starting automated container cleanup...")
+#        
+#        # Get production locations
+#        prod_locations = await get_prod_locations()
+#        if not prod_locations:
+#            logger.error(f"🚨 CRITICAL: No production locations found! Aborting cleanup.")
+#            return
+#                
+#        # Get all active requests from database (async)
+#        conn = await get_db_connection()
+#        try:
+#            cursor = await conn.cursor()
+#            await cursor.execute("""
+#                SELECT req_id, serial_no, part_no, revision, quantity, location, deliver_to, req_time
+#                FROM DROP_REQUESTS
+#                ORDER BY req_time DESC
+#            """)
+#            active_requests = await cursor.fetchall()
+#        finally:
+#            await release_db_connection(conn)
+#            
+#        logger.info(f"📊 Found {len(active_requests)} active requests to check")
+#        
+#        containers_to_remove = []
+#        
+#        # Check each active request
+#        for req_id, serial_no, part_no, revision, quantity, stored_location, deliver_to, req_time in active_requests:            
+#            # Get current location from ERP
+#            current_location = await check_container_current_location(serial_no)
+#            
+#            if current_location:
+#                is_in_prod = current_location in prod_locations
+#                
+#                # CRITICAL DEBUG: Log the exact decision logic for suspicious containers
+#                if serial_no == '3942299' or req_id == 3942299:
+#                    logger.error(f"🔍 CRITICAL DEBUG for container {serial_no} (req_id: {req_id}):")
+#                    logger.error(f"   Current Location: '{current_location}'")
+#                    logger.error(f"   Is in Production List: {is_in_prod}")
+#                    logger.error(f"   Production Locations: {prod_locations}")
+#                    logger.error(f"   Deliver To: {deliver_to}")
+#                    if is_in_prod:
+#                        logger.error(f"   ❌ WILL BE DELETED")
+#                    else:
+#                        logger.error(f"   ✅ WILL BE KEPT")
+#                
+#                # Check if current location is in production locations
+#                if is_in_prod:
+#                    logger.warning(f"🎯 FLAGGED FOR DELETION: {serial_no} (current: {current_location})")
+#                    
+#                    containers_to_remove.append({
+#                        'req_id': req_id,
+#                        'serial_no': serial_no,
+#                        'part_no': part_no,
+#                        'revision': revision,
+#                        'quantity': quantity,
+#                        'stored_location': stored_location,
+#                        'current_location': current_location,
+#                        'deliver_to': deliver_to,
+#                        'req_time': req_time
+#                    })
+#                else:
+#                    logger.info(f"📍 KEEPING: {serial_no} (current: {current_location} not in production)")
+#            else:
+#                logger.warning(f"⚠️ KEEPING: {serial_no} (location unknown)")
+#            
+#            # Small delay to avoid overwhelming the ERP API
+#            await asyncio.sleep(0.5)
+#        
+#        # Remove containers that are now in production locations
+#        if containers_to_remove:
+#            logger.warning(f"🗑️ PROCESSING {len(containers_to_remove)} CONTAINERS FOR DELETION!")
+#            
+#            # Safety check - don't delete if too many containers flagged
+#            if len(containers_to_remove) > 10:
+#                logger.error(f"🚨 SAFETY ABORT: Too many containers ({len(containers_to_remove)}) flagged for deletion!")
+#                logger.error(f"🚨 This could indicate a system error. Aborting cleanup for safety.")
+#                return
+#            
+#            conn = await get_db_connection()
+#            try:
+#                cursor = await conn.cursor()
+#                successful_deletions = 0
+#                
+#                for container in containers_to_remove:
+#                    container_serial = container['serial_no']
+#                    
+#                    try:
+#                        # Log to history before deleting
+#                        history_logged = await log_request_to_history(
+#                            req_id=container['req_id'],
+#                            serial_no=container['serial_no'],
+#                            part_no=container['part_no'],
+#                            revision=container['revision'] or '',
+#                            quantity=float(container['quantity']) if container['quantity'] else 0.0,
+#                            location=container['stored_location'],
+#                            deliver_to=container['deliver_to'],
+#                            req_time=container['req_time'],
+#                            current_location=container['current_location'],
+#                            fulfillment_type='auto_cleanup'
+#                        )
+#                        
+#                        if history_logged:
+#                            # Only delete from DROP_REQUESTS if history logging succeeded
+#                            await cursor.execute("DELETE FROM DROP_REQUESTS WHERE req_id = ?", (container['req_id'],))
+#                            successful_deletions += 1
+#                            
+#                            logger.warning(f"✅ DELETED: Container {container_serial} (moved to {container['current_location']})")
+#                        else:
+#                            logger.error(f"⚠️ SKIPPED: Container {container_serial} (history logging failed)")
+#                            
+#                    except Exception as e:
+#                        logger.error(f"❌ ERROR: Failed to delete container {container_serial}: {e}")
+#                
+#                await conn.commit()
+#                logger.info(f"✅ Deletion complete: {successful_deletions}/{len(containers_to_remove)} successful")
+#                
+#            finally:
+#                await release_db_connection(conn)
+#        else:
+#            logger.info("✅ No containers need to be removed at this time")
+#        
+#        logger.info(f"🏁 Cleanup complete: Checked {len(active_requests)} requests, removed {len(containers_to_remove)} containers")
+#        
+#        # Send cleanup notification to all connected users
+#        await send_cleanup_notification({
+#            'type': 'auto_cleanup_complete',
+#            'checked_requests': len(active_requests),
+#            'removed_containers': len(containers_to_remove),
+#            'containers_removed': [
+#                {
+#                    'serial_no': c['serial_no'],
+#                    'current_location': c['current_location'],
+#                    'deliver_to': c['deliver_to']
+#                } for c in containers_to_remove
+#            ] if containers_to_remove else [],
+#            'timestamp': datetime.now().isoformat()
+#        })
+#        
+#    except Exception as e:
+#        logger.error(f"❌ CRITICAL ERROR in automated cleanup: {e}")
+#        import traceback
+#        logger.error(f"📋 Traceback: {traceback.format_exc()}")
+#        
+#        # Send error notification
+#        await send_cleanup_notification({
+#            'type': 'auto_cleanup_error',
+#            'error': str(e),
+#            'timestamp': datetime.now().isoformat()
+#        })
 
 async def manual_container_cleanup():
     """
@@ -1178,55 +1184,55 @@ async def manual_container_cleanup():
             'removed_containers': 0
         }
 
-async def automated_history_cleanup():
-    """
-    Automated function to clean up history records older than 30 days
-    Runs daily to maintain database performance
-    """
-    try:
-        logger.info("🧹 Starting automated history cleanup...")
-        
-        conn = await get_db_connection()
-        try:
-            cursor = await conn.cursor()
-            
-            # Count records that will be deleted
-            await cursor.execute("""
-                SELECT COUNT(*)
-                FROM DROP_REQUESTS_HISTORY
-                WHERE fulfilled_time < DATEADD(day, -30, GETDATE())
-            """)
-            row = await cursor.fetchone()
-            records_to_delete = row[0] if row else 0
-
-            if records_to_delete > 0:
-                # Delete records older than 30 days
-                await cursor.execute("""
-                    DELETE FROM DROP_REQUESTS_HISTORY
-                    WHERE fulfilled_time < DATEADD(day, -30, GETDATE())
-                """)
-                await conn.commit()
-
-                logger.info(f"✅ Cleaned up {records_to_delete} old history records (>30 days)")
-            else:
-                logger.info("✅ No old history records to clean up")
-
-            # Get current statistics after cleanup
-            await cursor.execute("SELECT COUNT(*) FROM DROP_REQUESTS_HISTORY")
-            row = await cursor.fetchone()
-            remaining_records = row[0] if row else 0
-            logger.info(f"📊 History table now contains {remaining_records} records")
-        finally:
-            await release_db_connection(conn)
-        
-    except Exception as e:
-        logger.error(f"❌ Error in automated history cleanup: {e}")
-        import traceback
-        logger.error(f"📋 Traceback: {traceback.format_exc()}")
-
-# --- API Routes ---
-
-active_connections = []
+# async def automated_history_cleanup():
+#     """
+#     Automated function to clean up history records older than 30 days
+#     Runs daily to maintain database performance
+#     """
+#     try:
+#         logger.info("🧹 Starting automated history cleanup...")
+#         
+#         conn = await get_db_connection()
+#         try:
+#             cursor = await conn.cursor()
+#             
+#             # Count records that will be deleted
+#             await cursor.execute("""
+#                 SELECT COUNT(*)
+#                 FROM DROP_REQUESTS_HISTORY
+#                 WHERE fulfilled_time < DATEADD(day, -30, GETDATE())
+#             """)
+#             row = await cursor.fetchone()
+#             records_to_delete = row[0] if row else 0
+# 
+#             if records_to_delete > 0:
+#                 # Delete records older than 30 days
+#                 await cursor.execute("""
+#                     DELETE FROM DROP_REQUESTS_HISTORY
+#                     WHERE fulfilled_time < DATEADD(day, -30, GETDATE())
+#                 """)
+#                 await conn.commit()
+# 
+#                 logger.info(f"✅ Cleaned up {records_to_delete} old history records (>30 days)")
+#             else:
+#                 logger.info("✅ No old history records to clean up")
+# 
+#             # Get current statistics after cleanup
+#             await cursor.execute("SELECT COUNT(*) FROM DROP_REQUESTS_HISTORY")
+#             row = await cursor.fetchone()
+#             remaining_records = row[0] if row else 0
+#             logger.info(f"📊 History table now contains {remaining_records} records")
+#         finally:
+#             await release_db_connection(conn)
+#         
+#     except Exception as e:
+#         logger.error(f"❌ Error in automated history cleanup: {e}")
+#         import traceback
+#         logger.error(f"📋 Traceback: {traceback.format_exc()}")
+# 
+# # --- API Routes ---
+# 
+# active_connections = []
 @app.post("/test")
 def test():
     return {"message": "Success"}
@@ -1660,20 +1666,31 @@ async def get_cleanup_status():
     Get status information about the automated cleanup system
     """
     try:
-        # Get scheduler info
-        jobs = scheduler.get_jobs()
-        cleanup_job = next((job for job in jobs if job.id == 'container_cleanup'), None)
-        
+        # COMMENTED OUT - Auto cleanup disabled
+        # # Get scheduler info
+        # jobs = scheduler.get_jobs()
+        # cleanup_job = next((job for job in jobs if job.id == 'container_cleanup'), None)
+        #
+        # status_info = {
+        #     'scheduler_running': scheduler.running,
+        #     'cleanup_job_active': cleanup_job is not None,
+        #     'next_run_time': None,
+        #     'jobs_count': len(jobs),
+        #     'last_cleanup_time': None  # You could store this in a file or database if needed
+        # }
+        #
+        # if cleanup_job:
+        #     status_info['next_run_time'] = cleanup_job.next_run_time.isoformat() if cleanup_job.next_run_time else None
+
+        # Auto cleanup disabled - return static status
         status_info = {
-            'scheduler_running': scheduler.running,
-            'cleanup_job_active': cleanup_job is not None,
+            'scheduler_running': False,
+            'cleanup_job_active': False,
             'next_run_time': None,
-            'jobs_count': len(jobs),
-            'last_cleanup_time': None  # You could store this in a file or database if needed
+            'jobs_count': 0,
+            'last_cleanup_time': None,
+            'auto_cleanup_enabled': False
         }
-        
-        if cleanup_job:
-            status_info['next_run_time'] = cleanup_job.next_run_time.isoformat() if cleanup_job.next_run_time else None
         
         # Get current database statistics
         conn = await get_db_connection()
