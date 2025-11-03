@@ -26,7 +26,6 @@ A warehouse management system for tracking and managing container return request
 - Python 3.8+
 - Azure SQL Database instance
 - Plex ERP system access
-- Node.js (for frontend dependencies)
 
 ## Installation
 
@@ -41,12 +40,7 @@ A warehouse management system for tracking and managing container return request
    pip install -r requirements.txt
    ```
 
-3. **Install Node.js dependencies**
-   ```bash
-   npm install
-   ```
-
-4. **Set up environment variables**
+3. **Set up environment variables**
    Create a `.env` file with:
    ```
    AZURE_SQL_SERVER=your-server-name
@@ -109,10 +103,10 @@ CREATE TABLE REQUESTS (
 
 ```
 Drop List/
-├── main.py              # FastAPI application
+├── main.py              # FastAPI application entry point
 ├── requirements.txt     # Python dependencies
-├── package.json        # Node.js dependencies
 ├── Dockerfile          # Container configuration
+├── .env                # Environment configuration
 ├── templates/          # HTML templates
 │   ├── index.html      # Main interface
 │   └── driver.html     # Driver interface
